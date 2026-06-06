@@ -4,6 +4,7 @@ import { normalizeProviderId } from "@openclaw/model-catalog-core/provider-id";
 import { normalizeStringEntries } from "@openclaw/normalization-core/string-normalization";
 import { z } from "zod";
 import { isSafeExecutableValue } from "../infra/exec-safety.js";
+import type { ThinkingLevelMap } from "../llm/types.js";
 import {
   formatExecSecretRefIdValidationMessage,
   isValidExecSecretRefId,
@@ -240,6 +241,19 @@ const ModelCompatSchema = z
   .strict()
   .optional();
 
+const ModelThinkingLevelMapSchema = z
+  .object({
+    off: z.string().min(1).nullable().optional(),
+    minimal: z.string().min(1).nullable().optional(),
+    low: z.string().min(1).nullable().optional(),
+    medium: z.string().min(1).nullable().optional(),
+    high: z.string().min(1).nullable().optional(),
+    xhigh: z.string().min(1).nullable().optional(),
+    max: z.string().min(1).nullable().optional(),
+  })
+  .strict()
+  .optional();
+
 type AssertAssignable<_T extends U, U> = true;
 export type _ModelCompatSchemaAssignableToType = AssertAssignable<
   z.infer<typeof ModelCompatSchema>,
@@ -248,6 +262,14 @@ export type _ModelCompatSchemaAssignableToType = AssertAssignable<
 export type _ModelCompatTypeAssignableToSchema = AssertAssignable<
   ModelCompatConfig | undefined,
   z.infer<typeof ModelCompatSchema>
+>;
+export type _ModelThinkingLevelMapSchemaAssignableToType = AssertAssignable<
+  z.infer<typeof ModelThinkingLevelMapSchema>,
+  ThinkingLevelMap | undefined
+>;
+export type _ModelThinkingLevelMapTypeAssignableToSchema = AssertAssignable<
+  ThinkingLevelMap | undefined,
+  z.infer<typeof ModelThinkingLevelMapSchema>
 >;
 
 const ConfiguredProviderRequestTlsSchema = z
@@ -384,6 +406,7 @@ const ModelDefinitionSchema = z
     contextWindow: z.number().positive().optional(),
     contextTokens: z.number().int().positive().optional(),
     maxTokens: z.number().positive().optional(),
+    thinkingLevelMap: ModelThinkingLevelMapSchema,
     params: z.record(z.string(), z.unknown()).optional(),
     agentRuntime: ModelAgentRuntimePolicySchema,
     headers: z.record(z.string(), z.string()).optional(),

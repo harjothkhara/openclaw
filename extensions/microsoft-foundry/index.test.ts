@@ -823,6 +823,21 @@ describe("microsoft-foundry plugin", () => {
     expect(provider?.models[0]?.compat?.maxTokensField).toBe("max_completion_tokens");
   });
 
+  it("emits auth config with Foundry thinking level maps", () => {
+    const result = buildFoundryAuthResult({
+      profileId: "microsoft-foundry:entra",
+      apiKey: "__entra_id_dynamic__",
+      endpoint: "https://example.services.ai.azure.com",
+      modelId: "gpt-5.4",
+      modelNameHint: "gpt-5.4",
+      api: "openai-completions",
+      authMethod: "entra-id",
+    });
+
+    const provider = result.configPatch?.models?.providers?.["microsoft-foundry"];
+    expect(provider?.models[0]?.thinkingLevelMap?.minimal).toBe(null);
+  });
+
   it("records model-name reasoning effort limits for Foundry deployment aliases", () => {
     const result = buildFoundryAuthResult({
       profileId: "microsoft-foundry:default",
