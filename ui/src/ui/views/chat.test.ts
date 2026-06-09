@@ -874,6 +874,104 @@ describe("chat goal status", () => {
   });
 });
 
+describe("chat composer run status", () => {
+  it("shows in-progress while the selected session send is awaiting chat.send acknowledgement", () => {
+    const container = renderChatView({
+      queue: [
+        {
+          id: "send-1",
+          text: "start working",
+          createdAt: 1,
+          sendRunId: "run-1",
+          sendState: "sending",
+          sessionKey: "main",
+        },
+      ],
+    });
+
+    expect(container.querySelector(".agent-chat__run-status")?.getAttribute("aria-label")).toBe(
+      "Run status: In progress",
+    );
+  });
+
+  it("shows in-progress while the selected session send is waiting for a model switch", () => {
+    const container = renderChatView({
+      queue: [
+        {
+          id: "send-1",
+          text: "start after model switch",
+          createdAt: 1,
+          sendRunId: "run-1",
+          sendState: "waiting-model",
+          sessionKey: "main",
+        },
+      ],
+    });
+
+    expect(container.querySelector(".agent-chat__run-status")?.getAttribute("aria-label")).toBe(
+      "Run status: In progress",
+    );
+  });
+
+  it("does not show in-progress for failed, reconnecting, or other-session sends", () => {
+    const container = renderChatView({
+      queue: [
+        {
+          id: "failed-send",
+          text: "blocked",
+          createdAt: 1,
+          sendRunId: "run-failed",
+          sendState: "failed",
+          sessionKey: "main",
+        },
+        {
+          id: "reconnect-send",
+          text: "wait for gateway",
+          createdAt: 2,
+          sendRunId: "run-reconnect",
+          sendState: "waiting-reconnect",
+          sessionKey: "main",
+        },
+        {
+          id: "other-send",
+          text: "different session",
+          createdAt: 3,
+          sendRunId: "run-other",
+          sendState: "sending",
+          sessionKey: "other",
+        },
+      ],
+    });
+
+    expect(container.querySelector(".agent-chat__run-status")).toBeNull();
+  });
+
+  it("keeps terminal run-status toasts ahead of pre-ack send status", () => {
+    const container = renderChatView({
+      queue: [
+        {
+          id: "send-1",
+          text: "new prompt",
+          createdAt: 1,
+          sendRunId: "run-1",
+          sendState: "sending",
+          sessionKey: "main",
+        },
+      ],
+      runStatus: {
+        phase: "done",
+        runId: "previous-run",
+        sessionKey: "main",
+        occurredAt: Date.now(),
+      },
+    });
+
+    expect(container.querySelector(".agent-chat__run-status")?.getAttribute("aria-label")).toBe(
+      "Run status: Done",
+    );
+  });
+});
+
 describe("chat composer workbench", () => {
   it("renders session controls in the composer and workspace files in the rail", () => {
     const onRefresh = vi.fn();

@@ -573,6 +573,9 @@ describeControlUiE2e("Control UI mocked Gateway E2E", () => {
       const runId = requireString(params.idempotencyKey, "chat send idempotency key");
 
       await page.locator(".chat-queue").getByText("Sending").waitFor({ timeout: 10_000 });
+      await page.getByRole("status", { name: "Run status: In progress" }).waitFor({
+        timeout: 10_000,
+      });
       await page.locator(".chat-queue").getByText(prompt).waitFor({ timeout: 10_000 });
       await page.locator(".chat-thread").getByText(prompt).waitFor({ timeout: 10_000 });
 
