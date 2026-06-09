@@ -2,11 +2,11 @@
 import type { Command } from "commander";
 import { createLazyImportLoader } from "../../shared/lazy-promise.js";
 import { resolveCliArgvInvocation } from "../argv-invocation.js";
-import { resolveCliCommandPathPolicy } from "../command-path-policy.js";
 import {
   shouldEagerRegisterSubcommands,
   shouldRegisterPrimarySubcommandOnly,
 } from "../command-registration-policy.js";
+import { shouldRegisterPluginCliCommandsForCommandPath } from "../command-startup-policy.js";
 import {
   buildCommandGroupEntries,
   defineImportedProgramCommandGroupSpecs,
@@ -74,7 +74,7 @@ async function registerSubCliWithPluginCommands(
   const invocation = resolveCliArgvInvocation(argv);
   const shouldRegisterPluginCommands =
     !invocation.hasHelpOrVersion &&
-    resolveCliCommandPathPolicy(invocation.commandPath).loadPlugins !== "never";
+    shouldRegisterPluginCliCommandsForCommandPath(invocation.commandPath);
   if (pluginCliPosition === "before" && shouldRegisterPluginCommands) {
     const { registerPluginCliCommandsFromValidatedConfig } = await pluginCliLoader.load();
     await registerPluginCliCommandsFromValidatedConfig(program);

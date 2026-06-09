@@ -163,7 +163,7 @@ export async function ensureConfigReady(params: {
   commandPath?: string[];
   suppressDoctorStdout?: boolean;
   allowInvalid?: boolean;
-}): Promise<void> {
+}): Promise<{ valid: boolean }> {
   const commandPath = params.commandPath ?? [];
   let preflightSnapshot: Awaited<ReturnType<typeof readConfigFileSnapshot>> | null = null;
   const shouldConsiderStateMigration = shouldMigrateStateFromPath(commandPath);
@@ -229,7 +229,7 @@ export async function ensureConfigReady(params: {
     setRuntimeConfigSnapshot(snapshot.runtimeConfig ?? snapshot.config, snapshot.sourceConfig);
   }
   if (!invalid) {
-    return;
+    return { valid: true };
   }
 
   const [
@@ -277,6 +277,7 @@ export async function ensureConfigReady(params: {
   if (!allowInvalid) {
     params.runtime.exit(1);
   }
+  return { valid: false };
 }
 
 export const testApi = {

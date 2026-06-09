@@ -31,6 +31,11 @@ export function shouldLoadPluginsForCommandPath(params: {
   });
 }
 
+export function shouldRegisterPluginCliCommandsForCommandPath(commandPath: string[]): boolean {
+  const policy = resolveCliCommandPathPolicy(commandPath);
+  return policy.registerPluginCliCommands && policy.loadPlugins !== "never";
+}
+
 function shouldLoadPlugins(params: {
   argv?: string[];
   commandPath: string[];

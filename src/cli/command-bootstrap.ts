@@ -21,16 +21,19 @@ export async function ensureCliCommandBootstrap(params: {
   loadPlugins?: boolean;
   pluginRegistry?: CliPluginRegistryPolicy;
 }) {
+  let configReady: { valid: boolean } | undefined;
   if (!params.skipConfigGuard) {
     const { ensureConfigReady } = await loadConfigGuardModule();
-    await ensureConfigReady({
+    configReady = await ensureConfigReady({
       runtime: params.runtime,
       commandPath: params.commandPath,
       ...(params.allowInvalid ? { allowInvalid: true } : {}),
       ...(params.suppressDoctorStdout ? { suppressDoctorStdout: true } : {}),
     });
   }
-  if (!params.loadPlugins) {
+  // Invalid-config recovery installs may need the installer to repair plugin-owned
+  // config before runtime hook activation can safely read it.
+  if (!params.loadPlugins || (params.allowInvalid && configReady?.valid === false)) {
     return;
   }
   const pluginRegistryLoadPolicy =

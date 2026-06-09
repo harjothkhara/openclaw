@@ -35,6 +35,7 @@ export type CliCommandPathPolicy = {
   bypassConfigGuard: boolean;
   routeConfigGuard: CliRouteConfigGuardPolicy;
   loadPlugins: CliCommandPluginLoadPolicy;
+  registerPluginCliCommands: boolean;
   pluginRegistry: CliPluginRegistryPolicy;
   hideBanner: boolean;
   ensureCliPath: boolean;
@@ -320,6 +321,15 @@ export const cliCommandCatalog: readonly CliCommandCatalogEntry[] = [
     commandPath: ["plugins", "update"],
     exact: true,
     policy: { hideBanner: true },
+  },
+  {
+    commandPath: ["plugins", "install"],
+    exact: true,
+    policy: {
+      loadPlugins: "always",
+      registerPluginCliCommands: false,
+      pluginRegistry: { scope: "all" },
+    },
   },
   {
     commandPath: ["plugins", "list"],

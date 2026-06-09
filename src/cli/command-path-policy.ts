@@ -13,6 +13,7 @@ const DEFAULT_CLI_COMMAND_PATH_POLICY: CliCommandPathPolicy = {
   bypassConfigGuard: false,
   routeConfigGuard: "never",
   loadPlugins: "never",
+  registerPluginCliCommands: true,
   pluginRegistry: { scope: "all" },
   hideBanner: false,
   ensureCliPath: true,

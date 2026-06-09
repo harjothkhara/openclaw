@@ -28,14 +28,12 @@ describe("ensureCliCommandBootstrap", () => {
       runtime,
       commandPath: ["agents", "list"],
       suppressDoctorStdout: true,
-      allowInvalid: true,
       loadPlugins: true,
     });
 
     expect(ensureConfigReadyMock).toHaveBeenCalledWith({
       runtime,
       commandPath: ["agents", "list"],
-      allowInvalid: true,
       suppressDoctorStdout: true,
     });
     expect(ensureCliPluginRegistryLoadedMock).toHaveBeenCalledWith({
@@ -108,6 +106,40 @@ describe("ensureCliCommandBootstrap", () => {
     });
 
     expect(ensureConfigReadyMock).not.toHaveBeenCalled();
+    expect(ensureCliPluginRegistryLoadedMock).not.toHaveBeenCalled();
+  });
+
+  it("keeps plugin loading for recovery-capable installs when config is valid", async () => {
+    ensureConfigReadyMock.mockResolvedValueOnce({ valid: true });
+
+    await ensureCliCommandBootstrap({
+      runtime: {} as never,
+      commandPath: ["plugins", "install"],
+      allowInvalid: true,
+      loadPlugins: true,
+    });
+
+    expect(ensureCliPluginRegistryLoadedMock).toHaveBeenCalledWith({
+      scope: "all",
+      routeLogsToStderr: undefined,
+    });
+  });
+
+  it("skips plugin loading for invalid-config recovery commands", async () => {
+    ensureConfigReadyMock.mockResolvedValueOnce({ valid: false });
+
+    await ensureCliCommandBootstrap({
+      runtime: {} as never,
+      commandPath: ["plugins", "install"],
+      allowInvalid: true,
+      loadPlugins: true,
+    });
+
+    expect(ensureConfigReadyMock).toHaveBeenCalledWith({
+      runtime: expect.anything(),
+      commandPath: ["plugins", "install"],
+      allowInvalid: true,
+    });
     expect(ensureCliPluginRegistryLoadedMock).not.toHaveBeenCalled();
   });
 });

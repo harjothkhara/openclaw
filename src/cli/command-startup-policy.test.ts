@@ -6,6 +6,7 @@ import {
   shouldEnsureCliPathForCommandPath,
   shouldHideCliBannerForCommandPath,
   shouldLoadPluginsForCommandPath,
+  shouldRegisterPluginCliCommandsForCommandPath,
   shouldSkipRouteConfigGuardForCommandPath,
 } from "./command-startup-policy.js";
 
@@ -118,6 +119,18 @@ describe("command-startup-policy", () => {
     ).toBe(true);
     expect(
       shouldLoadPluginsForCommandPath({
+        commandPath: ["plugins", "install"],
+        jsonOutputMode: false,
+      }),
+    ).toBe(true);
+    expect(
+      shouldLoadPluginsForCommandPath({
+        commandPath: ["plugins", "install"],
+        jsonOutputMode: true,
+      }),
+    ).toBe(true);
+    expect(
+      shouldLoadPluginsForCommandPath({
         commandPath: ["agents"],
         jsonOutputMode: false,
       }),
@@ -164,6 +177,12 @@ describe("command-startup-policy", () => {
         jsonOutputMode: true,
       }),
     ).toBe(false);
+  });
+
+  it("keeps built-in plugin install hook loading separate from plugin CLI command registration", () => {
+    expect(shouldRegisterPluginCliCommandsForCommandPath(["plugins", "install"])).toBe(false);
+    expect(shouldRegisterPluginCliCommandsForCommandPath(["plugins", "inspect"])).toBe(false);
+    expect(shouldRegisterPluginCliCommandsForCommandPath(["channels", "send"])).toBe(true);
   });
 
   it("matches banner suppression policy", () => {

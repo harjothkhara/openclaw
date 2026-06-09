@@ -12,6 +12,7 @@ const DEFAULT_EXPECTED_POLICY: CliCommandPathPolicy = {
   bypassConfigGuard: false,
   routeConfigGuard: "never",
   loadPlugins: "never",
+  registerPluginCliCommands: true,
   pluginRegistry: { scope: "all" },
   hideBanner: false,
   ensureCliPath: true,
@@ -217,6 +218,11 @@ describe("command-path-policy", () => {
       loadPlugins: "never",
       hideBanner: true,
     });
+    expectResolvedPolicy(["plugins", "install"], {
+      loadPlugins: "always",
+      registerPluginCliCommands: false,
+      pluginRegistry: { scope: "all" },
+    });
     expectResolvedPolicy(["plugins", "list"], {
       ensureCliPath: false,
       loadPlugins: "never",
@@ -230,7 +236,6 @@ describe("command-path-policy", () => {
       });
     }
     for (const commandPath of [
-      ["plugins", "install"],
       ["plugins", "inspect"],
       ["plugins", "registry"],
       ["plugins", "doctor"],
