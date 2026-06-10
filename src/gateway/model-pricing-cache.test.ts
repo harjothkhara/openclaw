@@ -174,7 +174,7 @@ describe("model-pricing-cache", () => {
       "openrouter/anthropic/claude-opus-4-6",
       "openrouter/auto",
       "zai/glm-5",
-      "anthropic/claude-haiku-4-5",
+      "anthropic/claude-haiku-4-5-20251001",
       "google/gemini-2.5-pro",
     ]) {
       expect(refs).toContain(expectedRef);
@@ -655,7 +655,8 @@ describe("model-pricing-cache", () => {
     const config = {
       agents: {
         defaults: {
-          model: { primary: "anthropic/claude-opus-4-6" },
+          model: { primary: "anthropic/claude-haiku-4-5" },
+          compaction: { model: "anthropic/claude-opus-4-6" },
           subagents: { model: { primary: "zai/glm-openrouter-test" } },
         },
         list: [
@@ -673,6 +674,15 @@ describe("model-pricing-cache", () => {
         return new Response(
           JSON.stringify({
             data: [
+              {
+                id: "anthropic/claude-haiku-4.5",
+                pricing: {
+                  prompt: "0.0000008",
+                  completion: "0.000004",
+                  input_cache_read: "0.00000008",
+                  input_cache_write: "0.000001",
+                },
+              },
               {
                 id: "anthropic/claude-opus-4.6",
                 pricing: {
@@ -714,6 +724,17 @@ describe("model-pricing-cache", () => {
 
     await refreshGatewayModelPricingCache({ config, fetchImpl });
 
+    expect(
+      getCachedGatewayModelPricing({
+        provider: "anthropic",
+        model: "claude-haiku-4-5-20251001",
+      }),
+    ).toEqual({
+      input: expect.closeTo(0.8),
+      output: 4,
+      cacheRead: 0.08,
+      cacheWrite: 1,
+    });
     expect(
       getCachedGatewayModelPricing({ provider: "anthropic", model: "claude-opus-4-6" }),
     ).toEqual({

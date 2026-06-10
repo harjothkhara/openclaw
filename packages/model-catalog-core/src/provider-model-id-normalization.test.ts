@@ -42,11 +42,17 @@ describe("provider model id policy normalization", () => {
 
   it("normalizes native Anthropic catalog refs without retaining the provider prefix", () => {
     expect(
-      normalizeStaticProviderModelIdWithPolicies("anthropic", "anthropic/claude-haiku-4-5"),
-    ).toBe("claude-haiku-4-5");
-    expect(
       normalizeConfiguredProviderCatalogModelId("anthropic", "anthropic/claude-haiku-4-5"),
-    ).toBe("claude-haiku-4-5");
+    ).toBe("claude-haiku-4-5-20251001");
+    expect(normalizeStaticProviderModelIdWithPolicies("anthropic", "claude-haiku-4-5")).toBe(
+      "claude-haiku-4-5-20251001",
+    );
+    expect(normalizeStaticProviderModelIdWithPolicies("anthropic", "claude-haiku-4.5")).toBe(
+      "claude-haiku-4-5-20251001",
+    );
+    expect(
+      normalizeStaticProviderModelIdWithPolicies("anthropic", "anthropic/claude-haiku-4-5"),
+    ).toBe("claude-haiku-4-5-20251001");
   });
 
   it("normalizes provider-prefixed native catalog refs without stripping catalog prefixes", () => {

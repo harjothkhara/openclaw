@@ -1,4 +1,5 @@
 // Coverage for resolving bundled static manifest model catalog rows.
+import { readFileSync } from "node:fs";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const manifestMocks = vi.hoisted(() => ({
@@ -63,6 +64,16 @@ function setManifestPlugins(plugins: unknown[]) {
       ? { ok: true, manifest: plugin }
       : { ok: false, error: "missing manifest", manifestPath: `${pluginDir}/openclaw.plugin.json` };
   });
+}
+
+function createAnthropicManifestPlugin() {
+  const manifest = JSON.parse(
+    readFileSync(
+      new URL("../../../extensions/anthropic/openclaw.plugin.json", import.meta.url),
+      "utf8",
+    ),
+  ) as Record<string, unknown>;
+  return { ...manifest, origin: "bundled" };
 }
 
 function createMistralManifestPlugin(overrides?: {
@@ -146,6 +157,40 @@ describe("resolveBundledStaticCatalogModel", () => {
       provider: "mistral",
       reasoning: true,
     });
+  });
+
+  it("resolves Anthropic Haiku 4.5 by dated id and rolling aliases", () => {
+    setManifestPlugins([createAnthropicManifestPlugin()]);
+
+    for (const modelId of [
+      "claude-haiku-4-5-20251001",
+      "claude-haiku-4-5",
+      "claude-haiku-4.5",
+      "anthropic/claude-haiku-4-5",
+      "anthropic/claude-haiku-4.5",
+      "anthropic/claude-haiku-4-5-20251001",
+    ]) {
+      const model = resolveBundledStaticCatalogModel({
+        provider: "anthropic",
+        modelId,
+        cfg: {},
+      });
+
+      expect(model).toMatchObject({
+        api: "anthropic-messages",
+        baseUrl: "https://api.anthropic.com",
+        contextWindow: 200000,
+        id: "claude-haiku-4-5-20251001",
+        input: ["text", "image"],
+        maxTokens: 64000,
+        mediaInput: {
+          image: { maxSidePx: 1568, preferredSidePx: 1568, tokenMode: "provider" },
+        },
+        name: "Claude Haiku 4.5",
+        provider: "anthropic",
+        reasoning: true,
+      });
+    }
   });
 
   it("ignores non-bundled and non-static manifest catalog rows", () => {

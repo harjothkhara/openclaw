@@ -44,7 +44,10 @@ describe("normalizeStaticProviderModelId", () => {
 
   it("strips native Anthropic provider prefixes from static catalog ids", () => {
     expect(normalizeStaticProviderModelId("anthropic", "anthropic/claude-haiku-4-5")).toBe(
-      "claude-haiku-4-5",
+      "claude-haiku-4-5-20251001",
+    );
+    expect(normalizeStaticProviderModelId("anthropic", "anthropic/claude-haiku-4.5")).toBe(
+      "claude-haiku-4-5-20251001",
     );
   });
 

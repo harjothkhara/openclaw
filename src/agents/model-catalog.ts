@@ -180,15 +180,18 @@ function overlayCatalogMetadata(
   overlay: ModelCatalogEntry,
 ): ModelCatalogEntry {
   const params = mergeCatalogParams(base.params, overlay.params);
+  // Preserve output/media limits from manifest rows to close a pre-existing catalog metadata gap.
   return {
     ...base,
     ...(overlay.api !== undefined ? { api: overlay.api } : {}),
     ...(overlay.contextWindow !== undefined ? { contextWindow: overlay.contextWindow } : {}),
     ...(overlay.contextTokens !== undefined ? { contextTokens: overlay.contextTokens } : {}),
+    ...(overlay.maxTokens !== undefined ? { maxTokens: overlay.maxTokens } : {}),
     ...(overlay.reasoning !== undefined ? { reasoning: overlay.reasoning } : {}),
     ...(overlay.input !== undefined ? { input: overlay.input } : {}),
     ...(params ? { params } : {}),
     compat: mergeCatalogCompat(base.compat, overlay.compat),
+    ...(overlay.mediaInput !== undefined ? { mediaInput: overlay.mediaInput } : {}),
   };
 }
 
@@ -266,12 +269,16 @@ export function loadManifestModelCatalog(params: {
       provider: row.provider,
       api: row.api,
     };
+    // Carry manifest metadata through for all providers; older agent catalog rows missed these limits.
     const contextWindow = row.contextWindow ?? row.contextTokens;
     if (contextWindow) {
       entry.contextWindow = contextWindow;
     }
     if (row.contextTokens) {
       entry.contextTokens = row.contextTokens;
+    }
+    if (row.maxTokens) {
+      entry.maxTokens = row.maxTokens;
     }
     if (typeof row.reasoning === "boolean") {
       entry.reasoning = row.reasoning;
@@ -281,6 +288,9 @@ export function loadManifestModelCatalog(params: {
     }
     if (row.compat) {
       entry.compat = row.compat;
+    }
+    if (row.mediaInput) {
+      entry.mediaInput = row.mediaInput;
     }
     return entry;
   });

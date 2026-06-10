@@ -17,6 +17,7 @@ export type ModelCatalogEntry = {
   api?: ModelApi;
   contextWindow?: number;
   contextTokens?: number;
+  maxTokens?: number;
   reasoning?: boolean;
   input?: ModelInputType[];
   params?: Record<string, unknown>;

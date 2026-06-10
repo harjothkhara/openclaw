@@ -771,7 +771,7 @@ describe("resolveModel", () => {
 
     expectRecordFields(expectResolvedModel(anthropicResult), {
       provider: "anthropic",
-      id: "claude-haiku-4-5",
+      id: "claude-haiku-4-5-20251001",
     });
     expectRecordFields(expectResolvedModel(openaiResult), {
       provider: "openai",
@@ -779,7 +779,7 @@ describe("resolveModel", () => {
     });
     expect(resolveBundledStaticCatalogModelMock).toHaveBeenCalledWith({
       provider: "anthropic",
-      modelId: "claude-haiku-4-5",
+      modelId: "claude-haiku-4-5-20251001",
       cfg: undefined,
       workspaceDir: undefined,
     });
@@ -792,7 +792,7 @@ describe("resolveModel", () => {
     expect(resolveBundledStaticCatalogModelMock).not.toHaveBeenCalledWith(
       expect.objectContaining({
         provider: "openai",
-        modelId: "claude-haiku-4-5",
+        modelId: "claude-haiku-4-5-20251001",
       }),
     );
     expect(resolveBundledStaticCatalogModelMock).not.toHaveBeenCalledWith(

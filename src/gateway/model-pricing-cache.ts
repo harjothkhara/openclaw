@@ -538,6 +538,7 @@ function applyModelIdTransform(
     case "version-dots":
       return model
         .replace(/^claude-(\d+)-(\d+)-/u, "claude-$1.$2-")
+        .replace(/^claude-([a-z]+)-(\d+)-(\d+)-\d{8}$/u, "claude-$1-$2.$3")
         .replace(/^claude-([a-z]+)-(\d+)-(\d+)$/u, "claude-$1-$2.$3");
   }
   return model;
