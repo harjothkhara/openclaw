@@ -415,6 +415,7 @@ import {
   sanitizeOpenAIResponsesReplayForStream,
   sanitizeReplayToolCallIdsForStream,
   shouldApplyReplayToolCallIdSanitizer,
+  type UnknownToolLoopIntervention,
   wrapStreamFnPromoteStandaloneTextToolCalls,
   wrapStreamFnSanitizeMalformedToolCalls,
   wrapStreamFnTrimToolCallNames,
@@ -917,6 +918,7 @@ export async function runEmbeddedAttempt(
   let timedOutDuringCompaction = false;
   let timedOutDuringToolExecution = false;
   let promptError: unknown = null;
+  let unknownToolLoopIntervention: UnknownToolLoopIntervention | undefined;
   let emitDiagnosticRunCompleted:
     | ((
         outcome: "completed" | "aborted" | "blocked" | "error",
@@ -2840,6 +2842,9 @@ export async function runEmbeddedAttempt(
         allowedToolNames,
         {
           unknownToolThreshold: resolveUnknownToolGuardThreshold(clientToolLoopDetection),
+          onUnknownToolLoopIntervention: (intervention) => {
+            unknownToolLoopIntervention = intervention;
+          },
         },
       );
 
@@ -5303,6 +5308,7 @@ export async function runEmbeddedAttempt(
         promptCache,
         contextBudgetStatus,
         compactionCount: getCompactionCount(),
+        unknownToolLoopIntervention,
         compactionTokensAfter: getLastCompactionTokensAfter(),
         // Client tool calls detected (OpenResponses hosted tools).
         // Stay `undefined` (not `[]`) when none were detected so downstream

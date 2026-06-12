@@ -3094,6 +3094,7 @@ export async function runEmbeddedAgent(
           const failureSignal = resolveEmbeddedRunFailureSignal({
             trigger: params.trigger,
             lastToolError: attempt.lastToolError,
+            unknownToolLoopIntervention: attempt.unknownToolLoopIntervention,
           });
 
           // Timeout aborts can leave the run without payloads or with only a
