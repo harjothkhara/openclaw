@@ -3,7 +3,9 @@
 This fork (`harjothkhara/openclaw`) runs an agent-factory pipeline modeled on the
 Eva workflow: adversarial audit → plan → red-first implementation → evidence gate →
 bot review → human self-merge. Nothing produced by the factory is pushed upstream;
-all PRs target this fork's own `main`.
+all PRs target the factory trunk `factory/main`. The fork's `main` stays a clean
+upstream mirror (this fork doubles as the base for upstream contributions), so
+`main` can be force-synced to upstream at any time without losing factory work.
 
 ## Pipeline stages
 
@@ -27,8 +29,11 @@ all PRs target this fork's own `main`.
 
 - Work branches: `factory/fix-<id>` where `<id>` is the audit finding ID
   (e.g. `factory/fix-f01-1`). One finding per branch, one branch per PR.
-- All branches fork off freshly synced `main`. Scaffold/infra changes live on
-  `factory/scaffold`-style branches.
+- `factory/main` is the factory trunk and the base of every factory PR. It is
+  refreshed from upstream-synced `main` between audit cycles (rebase or re-merge),
+  never the other way around; nothing merges into `main`.
+- Work branches fork off current `factory/main`. Scaffold/infra changes live on
+  `factory/scaffold`-style branches and merge into `factory/main`.
 - Worktrees used for red runs or verification are removed as soon as that phase is done.
 
 ## Red-first test policy
@@ -84,7 +89,7 @@ the closest reproducible evidence (script, REPL transcript).
 - [ ] Red and green outputs in the PR body are real (spot-check the commands).
 - [ ] All CodeRabbit threads resolved.
 - [ ] *Deviations from spec* section read and accepted.
-- [ ] Branch is based on current fork `main`.
+- [ ] Branch is based on current `factory/main`.
 - [ ] Merge performed by the human, not the agent.
 
 ## Retro — run 1 (F01-1, 2026-06-12)
@@ -112,8 +117,10 @@ Single-lane MVP: audit → fix → draft PR <https://github.com/harjothkhara/ope
 3. Audit is the bottleneck and the value: one auditor produced 1 promotable finding
    per ~6 small files. For 3 lanes, run 3 auditors on disjoint slices *first*, then
    assign findings to lanes — don't audit per-lane on demand.
-4. Branch bookkeeping: audit docs live on `factory/scaffold` while fixes branch off
-   `main`, so fix branches can't see FACTORY.md. Merge scaffold to fork `main`
-   before scaling so every lane carries the rulebook.
+4. Branch bookkeeping (RESOLVED mid-run): fixes originally targeted fork `main`,
+   but this fork doubles as the upstream-contribution base, and future force-syncs
+   of `main` would wipe merged factory work. Introduced `factory/main` as the
+   factory trunk (scaffold merged in, PR #3 retargeted); `main` stays a clean
+   upstream mirror.
 5. Worktrees: single-clone lane-switching worked for 1 lane; 3 lanes need one
    worktree per lane (cleaned up at lane end) to avoid checkout thrash.
