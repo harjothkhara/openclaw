@@ -104,7 +104,8 @@ Single-lane MVP: audit → fix → draft PR <https://github.com/harjothkhara/ope
 | 2 Plan | ~5 min | Plan stayed in-session, not a committed artifact. |
 | 3 Implement | ~25 min | Red run captured first try. Friction: `pnpm test src/infra` lane config matches no files (exit 1) — run explicit test *files*, not directories; full-repo `format:check` is noisy — check only touched files. |
 | 4 CodeRabbit | ~15 min wall clock, ~2 min agent time | App install (human) + `@coderabbitai review` trigger comment (drafts are skipped by default). Result: 0 actionable comments, 5/5 pre-merge checks passed, "CHILL" profile — the review loop had nothing to resolve, so its enforcement value is untested this run. PR marked ready. |
-| 5 Merge | pending | Human self-merge into `factory/main`. |
+| 5 Merge | done 2026-06-12 | Human self-merged PR #3 into `factory/main` (f67e8d0f6e). Fork CI noise observed pre-merge: 2 jobs need upstream app secrets, 1 fails on a pre-existing dep advisory — consider disabling upstream workflows on the fork. |
+| + Upstream | follow-up | Same finding re-verified on upstream tip 777edadb36 and dupe-checked: prior attempt #78498 (same fix, clean bot review) was self-closed by its author, lane open. Fix re-proven red→green on a fresh branch off upstream main. Lesson: audit findings can be upstreamable, but the factory dupe-check must also search *closed* PRs — the first pass only searched open ones and missed #78498. |
 
 **Where it broke / what to change before 3 parallel lanes**
 
