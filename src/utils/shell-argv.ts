@@ -14,11 +14,15 @@ export function splitShellArgs(raw: string): string[] | null {
   let inSingle = false;
   let inDouble = false;
   let escaped = false;
+  // Quoted-empty words ("" / '') must survive as empty argv entries, so word
+  // starts are tracked explicitly instead of inferred from buf.length.
+  let wordActive = false;
 
   const pushToken = () => {
-    if (buf.length > 0) {
+    if (wordActive || buf.length > 0) {
       tokens.push(buf);
       buf = "";
+      wordActive = false;
     }
   };
 
@@ -58,15 +62,18 @@ export function splitShellArgs(raw: string): string[] | null {
     }
     if (ch === "'") {
       inSingle = true;
+      wordActive = true;
       continue;
     }
     if (ch === '"') {
       inDouble = true;
+      wordActive = true;
       continue;
     }
     // In POSIX shells, "#" starts a comment only when it begins a word; keep
-    // inline hashes inside tokens so URLs/fragments are not truncated.
-    if (ch === "#" && buf.length === 0) {
+    // inline hashes inside tokens (including after a quoted-empty word) so
+    // URLs/fragments and post-quote text are not truncated.
+    if (ch === "#" && buf.length === 0 && !wordActive) {
       break;
     }
     if (/\s/.test(ch)) {

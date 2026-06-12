@@ -75,6 +75,23 @@ describe("splitShellArgs", () => {
     expect(splitShellArgs(`echo "hi # still-literal"`)).toEqual(["echo", "hi # still-literal"]);
     expect(splitShellArgs(`echo hi#tail`)).toEqual(["echo", "hi#tail"]);
   });
+
+  it("preserves empty quoted arguments like a POSIX shell", () => {
+    expect(splitShellArgs(`git commit -m ""`)).toEqual(["git", "commit", "-m", ""]);
+    expect(splitShellArgs(`cmd '' x`)).toEqual(["cmd", "", "x"]);
+    expect(splitShellArgs(`openclaw "" channels login`)).toEqual([
+      "openclaw",
+      "",
+      "channels",
+      "login",
+    ]);
+    expect(splitShellArgs(`''`)).toEqual([""]);
+  });
+
+  it("keeps a hash after an empty quoted word literal instead of starting a comment", () => {
+    expect(splitShellArgs(`echo ''#tail more args`)).toEqual(["echo", "#tail", "more", "args"]);
+    expect(splitShellArgs(`echo ""# not-a-comment`)).toEqual(["echo", "#", "not-a-comment"]);
+  });
 });
 
 describe("chunkItems", () => {
