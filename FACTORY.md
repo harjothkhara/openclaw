@@ -86,3 +86,34 @@ the closest reproducible evidence (script, REPL transcript).
 - [ ] *Deviations from spec* section read and accepted.
 - [ ] Branch is based on current fork `main`.
 - [ ] Merge performed by the human, not the agent.
+
+## Retro — run 1 (F01-1, 2026-06-12)
+
+Single-lane MVP: audit → fix → draft PR <https://github.com/harjothkhara/openclaw/pull/3>.
+
+| Stage | Rough cost | Notes |
+|---|---|---|
+| 0 Fork hygiene | ~10 min | Backup branch + `gh repo sync --force`; existing contributor clone had live work, needed a second clone (`openclaw-factory`) — plan for one clone per concern. |
+| Scaffold | ~10 min | Rulebook + templates, cheap. |
+| 1 Audit | ~20 min, the bulk of model tokens | Slice choice did the heavy lifting: `src/utils` parser modules feeding exec risk analysis. One P1 confirmed (F01-1), one P2 backlogged (F01-2). Skeptic pass + bash/shlex oracle + caller walk was the valuable part; upstream dupe-check cost two `gh search` calls. |
+| 2 Plan | ~5 min | Plan stayed in-session, not a committed artifact. |
+| 3 Implement | ~25 min | Red run captured first try. Friction: `pnpm test src/infra` lane config matches no files (exit 1) — run explicit test *files*, not directories; full-repo `format:check` is noisy — check only touched files. |
+| 4 CodeRabbit | pending | Blocked on app install; CodeRabbit skips drafts by default, needs `@coderabbitai review` comment. |
+| 5 Merge | pending | Human self-merge. |
+
+**Where it broke / what to change before 3 parallel lanes**
+
+1. Test-lane sharding: `pnpm test <dir>` can select an empty shard and fail spuriously.
+   Lanes must always name explicit test files. (Worst failure mode: an agent
+   "fixes" a non-broken build.)
+2. CodeRabbit drafts: the evidence gate keeps PRs draft, but CodeRabbit ignores
+   drafts. Either configure CodeRabbit to review drafts or make the
+   `@coderabbitai review` comment a scripted pipeline step.
+3. Audit is the bottleneck and the value: one auditor produced 1 promotable finding
+   per ~6 small files. For 3 lanes, run 3 auditors on disjoint slices *first*, then
+   assign findings to lanes — don't audit per-lane on demand.
+4. Branch bookkeeping: audit docs live on `factory/scaffold` while fixes branch off
+   `main`, so fix branches can't see FACTORY.md. Merge scaffold to fork `main`
+   before scaling so every lane carries the rulebook.
+5. Worktrees: single-clone lane-switching worked for 1 lane; 3 lanes need one
+   worktree per lane (cleaned up at lane end) to avoid checkout thrash.
