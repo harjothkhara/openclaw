@@ -103,8 +103,8 @@ Single-lane MVP: audit → fix → draft PR <https://github.com/harjothkhara/ope
 | 1 Audit | ~20 min, the bulk of model tokens | Slice choice did the heavy lifting: `src/utils` parser modules feeding exec risk analysis. One P1 confirmed (F01-1), one P2 backlogged (F01-2). Skeptic pass + bash/shlex oracle + caller walk was the valuable part; upstream dupe-check cost two `gh search` calls. |
 | 2 Plan | ~5 min | Plan stayed in-session, not a committed artifact. |
 | 3 Implement | ~25 min | Red run captured first try. Friction: `pnpm test src/infra` lane config matches no files (exit 1) — run explicit test *files*, not directories; full-repo `format:check` is noisy — check only touched files. |
-| 4 CodeRabbit | pending | Blocked on app install; CodeRabbit skips drafts by default, needs `@coderabbitai review` comment. |
-| 5 Merge | pending | Human self-merge. |
+| 4 CodeRabbit | ~15 min wall clock, ~2 min agent time | App install (human) + `@coderabbitai review` trigger comment (drafts are skipped by default). Result: 0 actionable comments, 5/5 pre-merge checks passed, "CHILL" profile — the review loop had nothing to resolve, so its enforcement value is untested this run. PR marked ready. |
+| 5 Merge | pending | Human self-merge into `factory/main`. |
 
 **Where it broke / what to change before 3 parallel lanes**
 
@@ -113,7 +113,9 @@ Single-lane MVP: audit → fix → draft PR <https://github.com/harjothkhara/ope
    "fixes" a non-broken build.)
 2. CodeRabbit drafts: the evidence gate keeps PRs draft, but CodeRabbit ignores
    drafts. Either configure CodeRabbit to review drafts or make the
-   `@coderabbitai review` comment a scripted pipeline step.
+   `@coderabbitai review` comment a scripted pipeline step. Also: run 1 produced
+   0 actionable comments, so the resolve-every-thread policy is still unexercised —
+   don't assume the loop works under load until a run actually gets findings.
 3. Audit is the bottleneck and the value: one auditor produced 1 promotable finding
    per ~6 small files. For 3 lanes, run 3 auditors on disjoint slices *first*, then
    assign findings to lanes — don't audit per-lane on demand.
