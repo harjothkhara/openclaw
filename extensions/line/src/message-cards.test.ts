@@ -77,11 +77,33 @@ describe("createCarouselColumn", () => {
     expect(column.actions.length).toBe(3);
   });
 
-  it("truncates text to 120 characters", () => {
+  it("truncates text to 120 characters when no title or image is set", () => {
     const longText = "x".repeat(150);
     const column = createCarouselColumn({ text: longText, actions: [messageAction("OK")] });
 
     expect(column.text.length).toBe(120);
+  });
+
+  it("truncates text to 60 characters when a title is set", () => {
+    const longText = "x".repeat(150);
+    const column = createCarouselColumn({
+      title: "Title",
+      text: longText,
+      actions: [messageAction("OK")],
+    });
+
+    expect(column.text.length).toBe(60);
+  });
+
+  it("truncates text to 60 characters when a thumbnail image is set", () => {
+    const longText = "x".repeat(150);
+    const column = createCarouselColumn({
+      text: longText,
+      thumbnailImageUrl: "https://example.com/thumb.jpg",
+      actions: [messageAction("OK")],
+    });
+
+    expect(column.text.length).toBe(60);
   });
 });
 

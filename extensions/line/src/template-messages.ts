@@ -125,9 +125,14 @@ export function createCarouselColumn(params: {
   imageBackgroundColor?: string;
   defaultAction?: Action;
 }): CarouselColumn {
+  // LINE caps a carousel column's text at 60 chars when the column carries a
+  // title or thumbnail image, and 120 chars otherwise. Sending an over-length
+  // text makes LINE reject the whole carousel, so mirror the conditional limit
+  // the buttons template already applies above.
+  const textLimit = params.title?.trim() || params.thumbnailImageUrl?.trim() ? 60 : 120;
   return {
     title: params.title?.slice(0, 40),
-    text: params.text.slice(0, 120), // LINE limit
+    text: params.text.slice(0, textLimit),
     actions: params.actions.slice(0, 3), // LINE limit: max 3 actions per column
     thumbnailImageUrl: params.thumbnailImageUrl,
     imageBackgroundColor: params.imageBackgroundColor,
@@ -256,9 +261,8 @@ export function createProductCarousel(
 
     return createCarouselColumn({
       title: product.title,
-      text: product.price
-        ? `${product.description}\n${product.price}`.slice(0, 120)
-        : product.description,
+      // createCarouselColumn applies LINE's title/image-aware text limit.
+      text: product.price ? `${product.description}\n${product.price}` : product.description,
       thumbnailImageUrl: product.imageUrl,
       actions,
     });
