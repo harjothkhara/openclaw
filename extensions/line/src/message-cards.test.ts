@@ -186,6 +186,20 @@ describe("createProductCarousel", () => {
       .columns;
     expect(columns[0].actions[0].type).toBe(expectedType);
   });
+
+  it("preserves the complete price when truncating a long description", () => {
+    const template = createProductCarousel([
+      {
+        title: "Product",
+        description: "x".repeat(59),
+        price: "$12.99",
+      },
+    ]);
+    const columns = (template.template as { columns: Array<{ text: string }> }).columns;
+
+    expect(columns[0].text).toBe(`${"x".repeat(53)}\n$12.99`);
+    expect(columns[0].text.length).toBe(60);
+  });
 });
 
 describe("flex cards", () => {

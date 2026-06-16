@@ -13,6 +13,7 @@ type CarouselColumn = messagingApi.CarouselColumn;
 type ImageCarouselTemplate = messagingApi.ImageCarouselTemplate;
 type ImageCarouselColumn = messagingApi.ImageCarouselColumn;
 
+const COMPACT_TEMPLATE_TEXT_LIMIT = 60;
 const graphemeSegmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
 
 type TemplatePayloadAction = {
@@ -38,7 +39,7 @@ function resolveTemplateTextLimit(params: {
   textOnlyLimit: number;
 }): number {
   return params.title !== undefined || params.thumbnailImageUrl !== undefined
-    ? 60
+    ? COMPACT_TEMPLATE_TEXT_LIMIT
     : params.textOnlyLimit;
 }
 
@@ -62,6 +63,16 @@ function truncateTemplateText(text: string, limit: number): string {
     result += segment;
   }
   return result;
+}
+
+function formatProductCarouselText(description: string, price?: string): string {
+  if (!price) {
+    return description;
+  }
+  const priceText = truncateTemplateText(price, COMPACT_TEMPLATE_TEXT_LIMIT);
+  const descriptionLimit = Math.max(0, COMPACT_TEMPLATE_TEXT_LIMIT - priceText.length - 1);
+  const descriptionText = truncateTemplateText(description, descriptionLimit);
+  return descriptionText ? `${descriptionText}\n${priceText}` : priceText;
 }
 
 /**
@@ -298,8 +309,7 @@ export function createProductCarousel(
 
     return createCarouselColumn({
       title: product.title,
-      // createCarouselColumn applies LINE's title/image-aware text limit.
-      text: product.price ? `${product.description}\n${product.price}` : product.description,
+      text: formatProductCarouselText(product.description, product.price),
       thumbnailImageUrl: product.imageUrl,
       actions,
     });
