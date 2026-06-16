@@ -328,7 +328,7 @@ const addAnthropicProvider = (
           id,
           name: `Mock ${id}`,
           reasoning: false,
-          input: ["text"] as const,
+          input: ["text" as const],
           cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
           contextWindow: 16_000,
           maxTokens: 2048,
