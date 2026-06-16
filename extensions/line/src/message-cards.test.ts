@@ -106,6 +106,18 @@ describe("createCarouselColumn", () => {
     expect(column.text).toBe("x".repeat(59));
   });
 
+  it("keeps required text when the first grapheme exceeds the limit", () => {
+    const text = `😀${"\u0301".repeat(59)}`;
+    const column = createCarouselColumn({
+      title: "Title",
+      text,
+      actions: [messageAction("OK")],
+    });
+
+    expect(column.text.length).toBe(60);
+    expect(column.text.startsWith("😀")).toBe(true);
+  });
+
   it("uses the compact limit when a whitespace-only title is present", () => {
     const column = createCarouselColumn({
       title: " ",

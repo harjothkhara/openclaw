@@ -46,6 +46,17 @@ function truncateTemplateText(text: string, limit: number): string {
   let result = "";
   for (const { segment } of graphemeSegmenter.segment(text)) {
     if (result.length + segment.length > limit) {
+      // A pathological grapheme can exceed LINE's whole field limit. Preserve
+      // graphemes normally, but keep required text non-empty without splitting
+      // a surrogate pair when the first grapheme alone cannot fit.
+      if (!result) {
+        for (const codePoint of segment) {
+          if (result.length + codePoint.length > limit) {
+            break;
+          }
+          result += codePoint;
+        }
+      }
       break;
     }
     result += segment;
