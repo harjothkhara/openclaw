@@ -20,6 +20,10 @@ describe("check-database-first-legacy-stores", () => {
       await fs.writeFile(path.join(root, "src", "test-helpers.ts"), "export {};\n");
       await fs.writeFile(path.join(root, "src", "test-support.ts"), "export {};\n");
       await fs.writeFile(path.join(root, "src", "worker.test-helpers.ts"), "export {};\n");
+      await fs.mkdir(path.join(root, "src", "assets"), { recursive: true });
+      await fs.mkdir(path.join(root, "src", "dist"), { recursive: true });
+      await fs.writeFile(path.join(root, "src", "assets", "viewer-runtime.js"), "export {};\n");
+      await fs.writeFile(path.join(root, "src", "dist", "entry.js"), "export {};\n");
 
       const files = await collectDatabaseFirstLegacyStoreSourceFiles([path.join(root, "src")]);
       const relativeFiles = files

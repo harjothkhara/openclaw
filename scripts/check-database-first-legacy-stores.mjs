@@ -111,6 +111,15 @@ const allowedCurrentLegacyWriteViolations = [
 ];
 
 const sourceFileExtensions = new Set([".cjs", ".cts", ".js", ".mjs", ".mts", ".ts", ".tsx"]);
+const skippedSourceDirectoryNames = new Set([
+  ".cache",
+  ".turbo",
+  "assets",
+  "build",
+  "coverage",
+  "dist",
+  "node_modules",
+]);
 
 const sourceTestSuffixes = [
   ".e2e-harness.js",
@@ -241,7 +250,7 @@ async function collectSourceFiles(targetPath) {
   const entries = await fs.readdir(targetPath, { withFileTypes: true });
   const files = [];
   for (const entry of entries) {
-    if (entry.name === "node_modules") {
+    if (skippedSourceDirectoryNames.has(entry.name)) {
       continue;
     }
     const entryPath = path.join(targetPath, entry.name);
