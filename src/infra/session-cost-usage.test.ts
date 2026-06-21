@@ -1497,6 +1497,53 @@ describe("session cost usage", () => {
     });
   });
 
+  it("shares one in-flight directory listing for hidden batch lineage readers", async () => {
+    const root = await makeSessionCostRoot("cost-cache-batch-lineage-dir-cache");
+    const sessionsDir = path.join(root, "agents", "main", "sessions");
+    await fs.mkdir(sessionsDir, { recursive: true });
+    const sessionFiles = ["sess-dir-a", "sess-dir-b", "sess-dir-c"].map((sessionId) =>
+      path.join(sessionsDir, `${sessionId}.jsonl`),
+    );
+    const assistantMessage = (tokens: number) =>
+      JSON.stringify({
+        type: "message",
+        timestamp: "2026-02-05T13:00:00.000Z",
+        message: {
+          role: "assistant",
+          usage: { input: tokens, output: 0, totalTokens: tokens, cost: { total: tokens / 1000 } },
+        },
+      });
+    await Promise.all(
+      sessionFiles.map((sessionFile, index) =>
+        fs.writeFile(sessionFile, assistantMessage(index + 1), "utf-8"),
+      ),
+    );
+
+    await withStateDir(root, async () => {
+      await refreshCostUsageCache({ sessionFiles });
+      const readdirSpy = vi.spyOn(nodeFs.promises, "readdir");
+      try {
+        const result = await loadSessionCostSummariesFromCache({
+          sessions: sessionFiles.map((sessionFile, index) => ({
+            sessionId: `sess-dir-${String.fromCharCode(97 + index)}`,
+            sessionFile,
+          })),
+          agentId: "main",
+          requestRefresh: false,
+        });
+        const lineageDirReads = readdirSpy.mock.calls.filter(([dir]) => {
+          return path.resolve(String(dir)) === path.resolve(sessionsDir);
+        });
+
+        expect(result.cacheStatus.status).toBe("fresh");
+        expect(result.summaries.map((summary) => summary?.totalTokens)).toEqual([1, 2, 3]);
+        expect(lineageDirReads).toHaveLength(1);
+      } finally {
+        readdirSpy.mockRestore();
+      }
+    });
+  });
+
   it("returns a partial summary when a same-stem archive is not yet cached", async () => {
     const root = await makeSessionCostRoot("cost-cache-lineage-partial");
     const sessionsDir = path.join(root, "agents", "main", "sessions");

@@ -2058,18 +2058,18 @@ export async function loadSessionCostSummariesFromCache(params: {
   // reset/deleted spend, not just the active file (#46252). Every hidden session
   // for one agent shares a transcripts dir, so list each dir once and index by
   // name rather than running a per-session readdir on this hot aggregate path.
-  const dirNamesCache = new Map<string, string[]>();
+  const dirNamesCache = new Map<string, Promise<string[]>>();
   const readSessionsDirNames = async (sessionsDir: string): Promise<string[]> => {
     const cached = dirNamesCache.get(sessionsDir);
     if (cached) {
       return cached;
     }
-    const names = await fs.promises
+    const namesPromise = fs.promises
       .readdir(sessionsDir, { withFileTypes: true })
       .then((entries) => entries.filter((entry) => entry.isFile()).map((entry) => entry.name))
       .catch(() => [] as string[]);
-    dirNamesCache.set(sessionsDir, names);
-    return names;
+    dirNamesCache.set(sessionsDir, namesPromise);
+    return namesPromise;
   };
   const lineages = await Promise.all(
     params.sessions.map(async (session) => {
