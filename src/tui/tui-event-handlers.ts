@@ -10,6 +10,7 @@ import type {
   BtwEvent,
   ChatEvent,
   SessionChangedEvent,
+  SessionMessageEvent,
   TuiStateAccess,
 } from "./tui-types.js";
 
@@ -88,6 +89,11 @@ export function createEventHandlers(context: EventHandlerContext) {
   let streamAssembler = new TuiStreamAssembler();
   let lastSessionKey = state.currentSessionKey;
   let pendingHistoryRefresh = false;
+  let pendingHistoryRefreshCanFlushAfterDisplayableFinal = false;
+  let queuedHistoryReload = false;
+  let queuedHistoryReloadSessionKey: string | null = null;
+  let queuedHistoryReloadAgentId: string | null = null;
+  let historyReloadInFlight = false;
   let reconnectPendingRunId: string | null = null;
   const pendingTerminalLifecycleErrors = new Map<
     string,
@@ -103,17 +109,76 @@ export function createEventHandlers(context: EventHandlerContext) {
   let streamingWatchdogTimer: ReturnType<typeof setTimeout> | null = null;
   let streamingWatchdogRunId: string | null = null;
 
-  const flushPendingHistoryRefreshIfIdle = () => {
+  const clearPendingHistoryRefresh = () => {
+    pendingHistoryRefresh = false;
+    pendingHistoryRefreshCanFlushAfterDisplayableFinal = false;
+  };
+
+  const deferHistoryRefresh = (opts?: { afterDisplayableFinal?: "immediate" }) => {
+    pendingHistoryRefresh = true;
+    pendingHistoryRefreshCanFlushAfterDisplayableFinal =
+      pendingHistoryRefreshCanFlushAfterDisplayableFinal ||
+      opts?.afterDisplayableFinal === "immediate";
+  };
+
+  const isHistoryRefreshIdle = () =>
+    !state.activeChatRunId && !state.pendingChatRunId && !state.pendingOptimisticUserMessage;
+
+  const clearQueuedHistoryReload = () => {
+    queuedHistoryReload = false;
+    queuedHistoryReloadSessionKey = null;
+    queuedHistoryReloadAgentId = null;
+  };
+
+  const runQueuedHistoryReload = () => {
+    if (!queuedHistoryReload || historyReloadInFlight) {
+      return;
+    }
+    if (!loadHistory) {
+      clearQueuedHistoryReload();
+      return;
+    }
+    const reloadSessionKey = queuedHistoryReloadSessionKey;
+    const reloadAgentId = queuedHistoryReloadAgentId;
+    clearQueuedHistoryReload();
     if (
-      !pendingHistoryRefresh ||
-      state.activeChatRunId ||
-      state.pendingChatRunId ||
-      state.pendingOptimisticUserMessage
+      !isSameSessionKey(reloadSessionKey ?? undefined, state.currentSessionKey) ||
+      normalizeAgentId(reloadAgentId ?? undefined) !== normalizeAgentId(state.currentAgentId)
     ) {
       return;
     }
-    pendingHistoryRefresh = false;
-    void loadHistory?.();
+    historyReloadInFlight = true;
+    void Promise.resolve(loadHistory()).finally(() => {
+      historyReloadInFlight = false;
+      if (queuedHistoryReload) {
+        runQueuedHistoryReload();
+      }
+    });
+  };
+
+  const queueHistoryReload = () => {
+    queuedHistoryReload = true;
+    queuedHistoryReloadSessionKey = state.currentSessionKey ?? null;
+    queuedHistoryReloadAgentId = state.currentAgentId ?? null;
+    if (historyReloadInFlight) {
+      return;
+    }
+    runQueuedHistoryReload();
+  };
+
+  const flushPendingHistoryRefreshIfIdle = (opts?: { afterDisplayableFinal?: boolean }) => {
+    if (!pendingHistoryRefresh || !isHistoryRefreshIdle()) {
+      return;
+    }
+    if (
+      opts?.afterDisplayableFinal === true &&
+      !pendingHistoryRefreshCanFlushAfterDisplayableFinal
+    ) {
+      clearPendingHistoryRefresh();
+      return;
+    }
+    clearPendingHistoryRefresh();
+    queueHistoryReload();
   };
 
   const clearStreamingWatchdog = () => {
@@ -151,7 +216,7 @@ export function createEventHandlers(context: EventHandlerContext) {
     sessionRuns.clear();
     postFinalizingRuns.clear();
     streamAssembler = new TuiStreamAssembler();
-    pendingHistoryRefresh = false;
+    clearPendingHistoryRefresh();
     state.pendingOptimisticUserMessage = false;
     state.pendingChatRunId = null;
     state.pendingSubmitDraft = null;
@@ -182,7 +247,7 @@ export function createEventHandlers(context: EventHandlerContext) {
         state.activeChatRunId = null;
         state.activityStatus = "idle";
         setActivityStatus("idle");
-        pendingHistoryRefresh = false;
+        clearPendingHistoryRefresh();
         void loadHistory?.();
         tui.requestRender();
         return;
@@ -380,7 +445,7 @@ export function createEventHandlers(context: EventHandlerContext) {
     noteFinalizedRun(params.runId, { displayedFinal: params.displayedFinal });
     clearActiveRunIfMatch(params.runId);
     const promotedRemainingRun = promoteMostRecentSessionRun();
-    flushPendingHistoryRefreshIfIdle();
+    flushPendingHistoryRefreshIfIdle({ afterDisplayableFinal: params.displayedFinal === true });
     if (!promotedRemainingRun) {
       if (params.wasActiveRun) {
         setActivityStatus(params.status);
@@ -482,12 +547,12 @@ export function createEventHandlers(context: EventHandlerContext) {
       // Defer the reload if a newer run is active so we preserve the pending
       // user message, then flush once that active run finishes.
       if (state.activeChatRunId && state.activeChatRunId !== runId) {
-        pendingHistoryRefresh = true;
+        deferHistoryRefresh({ afterDisplayableFinal: "immediate" });
         return;
       }
     }
     if (!isPendingChatRun && (state.pendingChatRunId || state.pendingOptimisticUserMessage)) {
-      pendingHistoryRefresh = true;
+      deferHistoryRefresh({ afterDisplayableFinal: "immediate" });
       return;
     }
     // When the final event already produced displayable output, skip the
@@ -500,7 +565,7 @@ export function createEventHandlers(context: EventHandlerContext) {
     if (hasConcurrentActiveRun(runId)) {
       return;
     }
-    pendingHistoryRefresh = false;
+    clearPendingHistoryRefresh();
     void loadHistory?.();
   };
 
@@ -566,20 +631,33 @@ export function createEventHandlers(context: EventHandlerContext) {
     return false;
   };
 
+  const isGlobalSessionKey = (sessionKey: string | undefined): boolean =>
+    normalizeLowercaseStringOrEmpty(sessionKey) === "global";
+
+  const normalizeAgentId = (agentId: string | undefined): string =>
+    normalizeLowercaseStringOrEmpty(agentId);
+
   const isMatchingGlobalAgentEvent = (
     sessionKey: string | undefined,
     agentId?: string,
   ): boolean => {
-    if (normalizeLowercaseStringOrEmpty(sessionKey) !== "global") {
+    if (!isGlobalSessionKey(sessionKey)) {
       return true;
     }
-    const selectedAgentId = normalizeLowercaseStringOrEmpty(state.currentAgentId);
-    const defaultAgentId = normalizeLowercaseStringOrEmpty(state.agentDefaultId);
-    const eventAgentId = normalizeLowercaseStringOrEmpty(agentId);
+    const selectedAgentId = normalizeAgentId(state.currentAgentId);
+    const defaultAgentId = normalizeAgentId(state.agentDefaultId);
+    const eventAgentId = normalizeAgentId(agentId);
     if (eventAgentId) {
       return eventAgentId === selectedAgentId;
     }
     return selectedAgentId === defaultAgentId;
+  };
+
+  const isCurrentSessionMessageEvent = (evt: SessionMessageEvent): boolean => {
+    if (!isMatchingGlobalAgentEvent(evt.sessionKey, evt.agentId)) {
+      return false;
+    }
+    return isSameSessionKey(evt.sessionKey, state.currentSessionKey);
   };
 
   const handleChatEvent = (payload: unknown) => {
@@ -762,6 +840,31 @@ export function createEventHandlers(context: EventHandlerContext) {
     } else {
       void refreshSessionInfo?.();
     }
+    tui.requestRender();
+  };
+
+  const handleSessionMessageEvent = (payload: unknown) => {
+    if (!payload || typeof payload !== "object") {
+      return;
+    }
+    const evt = payload as SessionMessageEvent;
+    syncSessionKey();
+    if (!isCurrentSessionMessageEvent(evt)) {
+      return;
+    }
+    if (typeof evt.sessionId === "string") {
+      state.currentSessionId = evt.sessionId;
+    }
+    if (typeof evt.updatedAt === "number" || evt.updatedAt === null) {
+      state.sessionInfo.updatedAt = evt.updatedAt;
+    }
+    if (!isHistoryRefreshIdle()) {
+      deferHistoryRefresh();
+      void refreshSessionInfo?.();
+      return;
+    }
+    clearPendingHistoryRefresh();
+    queueHistoryReload();
     tui.requestRender();
   };
 
@@ -973,6 +1076,7 @@ export function createEventHandlers(context: EventHandlerContext) {
     handleAgentEvent,
     handleBtwEvent,
     handleSessionsChangedEvent,
+    handleSessionMessageEvent,
     pauseStreamingWatchdog,
     reconnectStreamingWatchdog,
     consumeCompletedRunForPendingSend,
