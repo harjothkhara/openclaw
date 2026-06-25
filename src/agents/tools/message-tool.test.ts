@@ -526,6 +526,37 @@ describe("message tool secret scoping", () => {
     expect(input?.toolContext?.currentChannelProvider).toBe("webchat");
   });
 
+  it("defaults webchat message tools to the internal source-reply sink", async () => {
+    mockSendResult();
+
+    const input = await executeSend({
+      action: { message: "hi" },
+      toolOptions: {
+        currentChannelProvider: "webchat",
+        agentSessionKey: "agent:main:webchat:dm:dashboard",
+      },
+    });
+
+    expect(input?.sourceReplyDeliveryMode).toBe("message_tool_only");
+    expect(input?.toolContext?.currentChannelProvider).toBe("webchat");
+  });
+
+  it("preserves explicit automatic source delivery for webchat message tools", async () => {
+    mockSendResult();
+
+    const input = await executeSend({
+      action: { message: "hi" },
+      toolOptions: {
+        currentChannelProvider: "webchat",
+        sourceReplyDeliveryMode: "automatic",
+        agentSessionKey: "agent:main:webchat:dm:dashboard",
+      },
+    });
+
+    expect(input?.sourceReplyDeliveryMode).toBe("automatic");
+    expect(input?.toolContext?.currentChannelProvider).toBe("webchat");
+  });
+
   it("passes current inbound audio to the outbound runner", async () => {
     mockSendResult();
 
