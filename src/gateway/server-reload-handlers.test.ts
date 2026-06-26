@@ -1275,7 +1275,8 @@ describe("gateway Gmail hot reload handlers", () => {
         config,
         authStores: [],
         warnings: [],
-        webTools: {},
+        webTools: createEmptyRuntimeWebToolsMetadata(),
+        webToolsFromFastPath: false,
       })) as never,
       resolveSharedGatewaySessionGenerationForConfig: () => undefined,
       sharedGatewaySessionGenerationState: { current: undefined, required: null },
@@ -1321,6 +1322,7 @@ describe("gateway Gmail hot reload handlers", () => {
       authStores: [],
       warnings: [],
       webTools: createEmptyRuntimeWebToolsMetadata(),
+      webToolsFromFastPath: false,
     });
     hoisted.startGmailWatcherWithLogs.mockRejectedValueOnce(new Error("start failed"));
     const reloader = startManagedGatewayConfigReloader({
@@ -1385,7 +1387,8 @@ describe("gateway Gmail hot reload handlers", () => {
         config,
         authStores: [],
         warnings: [],
-        webTools: {},
+        webTools: createEmptyRuntimeWebToolsMetadata(),
+        webToolsFromFastPath: false,
       })) as never,
       resolveSharedGatewaySessionGenerationForConfig: () => undefined,
       sharedGatewaySessionGenerationState: { current: undefined, required: null },
@@ -1493,7 +1496,8 @@ describe("gateway Gmail hot reload handlers", () => {
           config,
           authStores: [],
           warnings: [],
-          webTools: {},
+          webTools: createEmptyRuntimeWebToolsMetadata(),
+          webToolsFromFastPath: false,
         };
       }) as never,
       resolveSharedGatewaySessionGenerationForConfig: () => undefined,
