@@ -776,6 +776,54 @@ describe("ollama embedding provider", () => {
     });
   });
 
+  it("excludes secret custom headers from the memory cache identity", async () => {
+    const fetchMock = mockEmbeddingFetch([1, 0]);
+
+    const result = await ollamaMemoryEmbeddingProviderAdapter.create({
+      config: {
+        models: {
+          providers: {
+            "ollama-cpu": {
+              api: "ollama",
+              baseUrl: "https://ollama-cpu.home.lab",
+              headers: {
+                "X-Ollama-Tenant": "cpu",
+                "X-Api-Key": "super-secret", // pragma: allowlist secret
+              },
+              models: [],
+            },
+          },
+        },
+      } as unknown as OpenClawConfig,
+      provider: "ollama-cpu",
+      model: "qwen3-embedding:4b",
+      fallback: "none",
+    });
+
+    await result.provider!.embedQuery("hello");
+    // The secret header is still sent on the wire...
+    expectEmbeddingFetch(fetchMock, "https://ollama-cpu.home.lab/api/embed", {
+      model: "qwen3-embedding:4b",
+      input:
+        "Instruct: Given a user query, retrieve relevant memory notes and documents\nQuery:hello",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Ollama-Tenant": "cpu",
+        "X-Api-Key": "super-secret", // pragma: allowlist secret
+      },
+    });
+    // ...but kept out of cache identity so credential rotation cannot churn the index.
+    expect(result.runtime?.cacheKeyData).toMatchObject({
+      provider: "ollama-cpu",
+      baseUrl: "https://ollama-cpu.home.lab",
+      model: "qwen3-embedding:4b",
+      headers: [
+        ["Content-Type", "application/json"],
+        ["X-Ollama-Tenant", "cpu"],
+      ],
+    });
+  });
+
   it("marks inline memory batches as local-server timeout work", async () => {
     const result = await ollamaMemoryEmbeddingProviderAdapter.create({
       config: {} as OpenClawConfig,
