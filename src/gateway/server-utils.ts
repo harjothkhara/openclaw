@@ -2,12 +2,13 @@
 // Normalizes voice-wake triggers and formats unknown errors for logs/responses.
 import { normalizeTrimmedStringList } from "@openclaw/normalization-core/string-normalization";
 import { defaultVoiceWakeTriggers } from "../infra/voicewake.js";
+import { truncateUtf16Safe } from "../utils.js";
 
 /** Normalizes voice-wake trigger config with bounded count/length and defaults. */
 export function normalizeVoiceWakeTriggers(input: unknown): string[] {
   const cleaned = normalizeTrimmedStringList(input)
     .slice(0, 32)
-    .map((value) => value.slice(0, 64));
+    .map((value) => truncateUtf16Safe(value, 64));
   return cleaned.length > 0 ? cleaned : defaultVoiceWakeTriggers();
 }
 

@@ -944,6 +944,13 @@ describe("normalizeVoiceWakeTriggers", () => {
     const result = normalizeVoiceWakeTriggers(["  hello  ", "", "world"]);
     expect(result).toEqual(["hello", "world"]);
   });
+
+  test("does not split surrogate pairs when limiting entries", () => {
+    const result = normalizeVoiceWakeTriggers([`${"a".repeat(63)}😀`]);
+    const trigger = result[0] ?? "";
+    expect(trigger).toBe("a".repeat(63));
+    expect(trigger.includes(String.fromCharCode(0xd83d))).toBe(false);
+  });
 });
 
 describe("formatError", () => {
