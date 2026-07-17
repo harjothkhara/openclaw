@@ -596,22 +596,32 @@ export function detectToolCallLoop(
   const noProgressStreak = noProgress.count;
   const knownPollTool = isKnownPollToolCall(toolName, params);
   const pingPong = getPingPongStreak(history, currentHash);
-  const globalNoProgressStreak = Math.max(
-    noProgressStreak,
-    unknownToolStreak.count,
-    pingPong.noProgressEvidence ? pingPong.count : 0,
-  );
+  const globalNoProgress =
+    pingPong.noProgressEvidence &&
+    pingPong.count >= noProgressStreak &&
+    pingPong.count >= unknownToolStreak.count
+      ? {
+          count: pingPong.count,
+          description: `an alternating no-progress pattern involving ${toolName} and ${pingPong.pairedToolName ?? "another tool"} reached ${pingPong.count} attempts`,
+        }
+      : unknownToolStreak.count >= noProgressStreak
+        ? {
+            count: unknownToolStreak.count,
+            description: `the unavailable tool ${unknownToolStreak.unknownToolName ?? toolName} was attempted ${unknownToolStreak.count} times without progress`,
+          }
+        : {
+            count: noProgressStreak,
+            description: `${toolName} repeated identical no-progress outcomes ${noProgressStreak} times`,
+          };
 
-  if (globalNoProgressStreak >= resolvedConfig.globalCircuitBreakerThreshold) {
-    log.error(
-      `Global circuit breaker triggered: ${toolName} repeated ${globalNoProgressStreak} times with no progress`,
-    );
+  if (globalNoProgress.count >= resolvedConfig.globalCircuitBreakerThreshold) {
+    log.error(`Global circuit breaker triggered: ${globalNoProgress.description}`);
     return {
       stuck: true,
       level: "critical",
       detector: "global_circuit_breaker",
-      count: globalNoProgressStreak,
-      message: `CRITICAL: ${toolName} has repeated identical no-progress outcomes ${globalNoProgressStreak} times. Session execution blocked by global circuit breaker to prevent runaway loops.`,
+      count: globalNoProgress.count,
+      message: `CRITICAL: ${globalNoProgress.description}. Session execution blocked by global circuit breaker to prevent runaway loops.`,
       warningKey: `global:${toolName}:${currentHash}:${noProgress.latestResultHash ?? "none"}`,
     };
   }

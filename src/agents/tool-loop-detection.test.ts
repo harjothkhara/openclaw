@@ -723,6 +723,7 @@ describe("tool-loop-detection", () => {
       if (loopResult.stuck) {
         expect(loopResult.detector).toBe("global_circuit_breaker");
         expect(loopResult.count).toBe(5);
+        expect(loopResult.message).toContain("unavailable tool missing_tool");
       }
     });
 
@@ -809,6 +810,8 @@ describe("tool-loop-detection", () => {
       if (loopResult.stuck) {
         expect(loopResult.detector).toBe("global_circuit_breaker");
         expect(loopResult.count).toBe(6);
+        expect(loopResult.message).toContain("alternating no-progress pattern");
+        expect(loopResult.message).toContain("read");
       }
     });
 
