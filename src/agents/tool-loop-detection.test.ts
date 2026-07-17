@@ -17,6 +17,7 @@ import {
   UNKNOWN_TOOL_THRESHOLD,
   detectToolCallLoop,
   recordToolCall,
+  recordToolLoopVeto,
   recordToolCallOutcome,
 } from "./tool-loop-detection.js";
 
@@ -576,6 +577,42 @@ describe("tool-loop-detection", () => {
         expect(loopResult.detector).toBe("global_circuit_breaker");
         expect(loopResult.message).toContain("global circuit breaker");
       }
+    });
+
+    it("counts critical vetoes toward the global no-progress breaker", () => {
+      const state = createState();
+      const fixture = createReadNoProgressFixture();
+      const config: ToolLoopDetectionConfig = {
+        enabled: true,
+        warningThreshold: 2,
+        criticalThreshold: 3,
+        globalCircuitBreakerThreshold: 5,
+      };
+      recordRepeatedSuccessfulCalls({
+        state,
+        toolName: fixture.toolName,
+        toolParams: fixture.params,
+        result: fixture.result,
+        count: 3,
+      });
+
+      recordToolLoopVeto(state, {
+        toolName: fixture.toolName,
+        toolParams: fixture.params,
+      });
+      recordToolLoopVeto(state, {
+        toolName: fixture.toolName,
+        toolParams: fixture.params,
+      });
+
+      const loopResult = detectToolCallLoop(state, fixture.toolName, fixture.params, config);
+      expect(loopResult.stuck).toBe(true);
+      if (loopResult.stuck) {
+        expect(loopResult.detector).toBe("global_circuit_breaker");
+        expect(loopResult.count).toBe(5);
+      }
+      expect(state.toolCallHistory).toHaveLength(3);
+      expect(state.toolCallHistory?.at(-1)?.loopVetoCount).toBe(2);
     });
 
     it("blocks repeated completed exec calls despite volatile runtime details", () => {

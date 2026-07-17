@@ -383,6 +383,42 @@ describe("before_tool_call loop detection behavior", () => {
     });
   });
 
+  it("escalates repeated critical vetoes to the global circuit breaker", async () => {
+    const execute = vi.fn().mockResolvedValue({
+      content: [{ type: "text", text: "same output" }],
+      details: { ok: true },
+    });
+    const loopDetectionContext = {
+      ...enabledLoopDetectionContext,
+      loopDetection: {
+        enabled: true,
+        warningThreshold: 2,
+        criticalThreshold: 3,
+        globalCircuitBreakerThreshold: 5,
+      },
+    };
+    const tool = createWrappedTool("read", execute, loopDetectionContext);
+    const params = { path: "/tmp/file" };
+
+    for (let i = 0; i < 3; i += 1) {
+      await expectUnblockedToolExecution(tool, `read-${i}`, params);
+    }
+
+    expectToolLoopBlockedResult(
+      await tool.execute("read-critical-1", params, undefined, undefined),
+      "identical outcomes 3 times",
+    );
+    expectToolLoopBlockedResult(
+      await tool.execute("read-critical-2", params, undefined, undefined),
+      "identical outcomes 4 times",
+    );
+    expectToolLoopBlockedResult(
+      await tool.execute("read-global", params, undefined, undefined),
+      "global circuit breaker",
+    );
+    expect(execute).toHaveBeenCalledTimes(3);
+  });
+
   it("does nothing when loopDetection.enabled is false", async () => {
     const execute = vi.fn().mockResolvedValue({
       content: [{ type: "text", text: "(no new output)\n\nProcess still running." }],

@@ -1432,8 +1432,13 @@ export async function runBeforeToolCallHook(args: {
 
   try {
     if (args.ctx?.sessionKey) {
-      const { getDiagnosticSessionState, logToolLoopAction, detectToolCallLoop, recordToolCall } =
-        await loadBeforeToolCallRuntime();
+      const {
+        getDiagnosticSessionState,
+        logToolLoopAction,
+        detectToolCallLoop,
+        recordToolCall,
+        recordToolLoopVeto,
+      } = await loadBeforeToolCallRuntime();
       const sessionState = getDiagnosticSessionState({
         sessionKey: args.ctx.sessionKey,
         sessionId: args.ctx.sessionId,
@@ -1461,6 +1466,11 @@ export async function runBeforeToolCallHook(args: {
             count: loopResult.count,
             message: loopResult.message,
             pairedToolName: loopResult.pairedToolName,
+          });
+          recordToolLoopVeto(sessionState, {
+            toolName,
+            toolParams: params,
+            ...(args.ctx.runId && { runId: args.ctx.runId }),
           });
           return {
             blocked: true,

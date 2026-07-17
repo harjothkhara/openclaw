@@ -420,7 +420,12 @@ function getUnknownToolRepeatStreak(
 }
 
 function getNoProgressStreak(
-  history: Array<{ toolName: string; argsHash: string; resultHash?: string }>,
+  history: Array<{
+    toolName: string;
+    argsHash: string;
+    resultHash?: string;
+    loopVetoCount?: number;
+  }>,
   toolName: string,
   argsHash: string,
 ): { count: number; latestResultHash?: string } {
@@ -437,13 +442,13 @@ function getNoProgressStreak(
     }
     if (!latestResultHash) {
       latestResultHash = record.resultHash;
-      streak = 1;
+      streak = 1 + (record.loopVetoCount ?? 0);
       continue;
     }
     if (record.resultHash !== latestResultHash) {
       break;
     }
-    streak += 1;
+    streak += 1 + (record.loopVetoCount ?? 0);
   }
 
   return { count: streak, latestResultHash };
@@ -743,6 +748,38 @@ export function recordToolCall(
   if (state.toolCallHistory.length > resolvedConfig.historySize) {
     state.toolCallHistory.splice(0, state.toolCallHistory.length - resolvedConfig.historySize);
   }
+}
+
+/**
+ * Count a critical loop veto against the latest matching no-progress outcome.
+ */
+export function recordToolLoopVeto(
+  state: SessionState,
+  params: {
+    toolName: string;
+    toolParams: unknown;
+    runId?: string;
+  },
+): ToolCallRecord | undefined {
+  const runId = normalizeRunId(params.runId);
+  const argsHash = hashToolCall(params.toolName, params.toolParams);
+  const history = state.toolCallHistory ?? [];
+  for (let i = history.length - 1; i >= 0; i -= 1) {
+    const call = history[i];
+    if (
+      !call?.resultHash ||
+      call.toolName !== params.toolName ||
+      call.argsHash !== argsHash ||
+      normalizeRunId(call.runId) !== runId
+    ) {
+      continue;
+    }
+    // Keep the detector history unchanged so unknown-tool and ping-pong critical
+    // states stay sticky, while the global no-progress count continues advancing.
+    call.loopVetoCount = (call.loopVetoCount ?? 0) + 1;
+    return call;
+  }
+  return undefined;
 }
 
 /**

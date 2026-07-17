@@ -8,6 +8,7 @@ import { logToolLoopAction } from "../logging/diagnostic.js";
 import {
   detectToolCallLoop,
   recordToolCall,
+  recordToolLoopVeto,
   recordToolCallOutcome,
 } from "./tool-loop-detection.js";
 
@@ -17,5 +18,6 @@ export const beforeToolCallRuntime = {
   logToolLoopAction,
   detectToolCallLoop,
   recordToolCall,
+  recordToolLoopVeto,
   recordToolCallOutcome,
 };
