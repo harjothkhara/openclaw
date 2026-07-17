@@ -615,6 +615,32 @@ describe("tool-loop-detection", () => {
       expect(state.toolCallHistory?.at(-1)?.loopVetoCount).toBe(2);
     });
 
+    it("lets unknown-tool vetoes reach the global no-progress breaker", () => {
+      const state = createState();
+      const toolName = "missing_tool";
+      const params = { query: "same" };
+      const config: ToolLoopDetectionConfig = {
+        enabled: true,
+        warningThreshold: 1,
+        unknownToolThreshold: 2,
+        criticalThreshold: 3,
+        globalCircuitBreakerThreshold: 5,
+      };
+      for (let index = 0; index < 2; index += 1) {
+        recordFailedCall(state, toolName, params, new Error(`Tool ${toolName} not found`), index);
+      }
+      for (let index = 0; index < 3; index += 1) {
+        recordToolLoopVeto(state, { toolName, toolParams: params });
+      }
+
+      const loopResult = detectToolCallLoop(state, toolName, params, config);
+      expect(loopResult.stuck).toBe(true);
+      if (loopResult.stuck) {
+        expect(loopResult.detector).toBe("global_circuit_breaker");
+        expect(loopResult.count).toBe(5);
+      }
+    });
+
     it("blocks repeated completed exec calls despite volatile runtime details", () => {
       const state = createState();
       const params = { command: "grafana-api.sh datasources" };

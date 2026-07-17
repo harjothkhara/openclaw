@@ -583,17 +583,6 @@ export function detectToolCallLoop(
   const knownPollTool = isKnownPollToolCall(toolName, params);
   const pingPong = getPingPongStreak(history, currentHash);
 
-  if (unknownToolStreak.count >= resolvedConfig.unknownToolThreshold) {
-    return {
-      stuck: true,
-      level: "critical",
-      detector: "unknown_tool_repeat",
-      count: unknownToolStreak.count,
-      message: `CRITICAL: attempted unavailable tool ${unknownToolStreak.unknownToolName ?? toolName} ${unknownToolStreak.count} times. Stop retrying that missing tool and answer without it.`,
-      warningKey: `unknown-tool:${toolName}:${unknownToolStreak.unknownToolName ?? "unknown"}`,
-    };
-  }
-
   if (noProgressStreak >= resolvedConfig.globalCircuitBreakerThreshold) {
     log.error(
       `Global circuit breaker triggered: ${toolName} repeated ${noProgressStreak} times with no progress`,
@@ -605,6 +594,17 @@ export function detectToolCallLoop(
       count: noProgressStreak,
       message: `CRITICAL: ${toolName} has repeated identical no-progress outcomes ${noProgressStreak} times. Session execution blocked by global circuit breaker to prevent runaway loops.`,
       warningKey: `global:${toolName}:${currentHash}:${noProgress.latestResultHash ?? "none"}`,
+    };
+  }
+
+  if (unknownToolStreak.count >= resolvedConfig.unknownToolThreshold) {
+    return {
+      stuck: true,
+      level: "critical",
+      detector: "unknown_tool_repeat",
+      count: unknownToolStreak.count,
+      message: `CRITICAL: attempted unavailable tool ${unknownToolStreak.unknownToolName ?? toolName} ${unknownToolStreak.count} times. Stop retrying that missing tool and answer without it.`,
+      warningKey: `unknown-tool:${toolName}:${unknownToolStreak.unknownToolName ?? "unknown"}`,
     };
   }
 
