@@ -17,7 +17,7 @@ import { stableStringify } from "./stable-stringify.js";
 
 const log = createSubsystemLogger("agents/loop-detection");
 
-type LoopDetectorKind =
+export type LoopDetectorKind =
   | "generic_repeat"
   | "unknown_tool_repeat"
   | "known_poll_no_progress"
@@ -394,7 +394,7 @@ function hashToolOutcome(
 }
 
 function getUnknownToolRepeatStreak(
-  history: Array<{ toolName: string; unknownToolName?: string }>,
+  history: Array<{ toolName: string; unknownToolName?: string; loopVetoCount?: number }>,
   toolName: string,
 ): { count: number; unknownToolName?: string } {
   let streak = 0;
@@ -407,13 +407,13 @@ function getUnknownToolRepeatStreak(
     }
     if (!repeatedUnknownToolName) {
       repeatedUnknownToolName = record.unknownToolName;
-      streak = 1;
+      streak = 1 + (record.loopVetoCount ?? 0);
       continue;
     }
     if (record.unknownToolName !== repeatedUnknownToolName) {
       break;
     }
-    streak += 1;
+    streak += 1 + (record.loopVetoCount ?? 0);
   }
 
   return { count: streak, unknownToolName: repeatedUnknownToolName };
@@ -579,7 +579,7 @@ export function detectToolCallLoop(
   const currentHash = hashToolCall(toolName, params);
   const unknownToolStreak = getUnknownToolRepeatStreak(history, toolName);
   const noProgress = getNoProgressStreak(history, toolName, currentHash);
-  const noProgressStreak = noProgress.count;
+  const noProgressStreak = Math.max(noProgress.count, unknownToolStreak.count);
   const knownPollTool = isKnownPollToolCall(toolName, params);
   const pingPong = getPingPongStreak(history, currentHash);
 
@@ -758,6 +758,7 @@ export function recordToolLoopVeto(
   params: {
     toolName: string;
     toolParams: unknown;
+    detector: LoopDetectorKind;
     runId?: string;
   },
 ): ToolCallRecord | undefined {
@@ -766,10 +767,13 @@ export function recordToolLoopVeto(
   const history = state.toolCallHistory ?? [];
   for (let i = history.length - 1; i >= 0; i -= 1) {
     const call = history[i];
+    const exactCall = call?.argsHash === argsHash;
+    const matchingUnknownToolCall =
+      params.detector === "unknown_tool_repeat" && Boolean(call?.unknownToolName);
     if (
       !call?.resultHash ||
       call.toolName !== params.toolName ||
-      call.argsHash !== argsHash ||
+      (!exactCall && !matchingUnknownToolCall) ||
       normalizeRunId(call.runId) !== runId
     ) {
       continue;

@@ -599,10 +599,12 @@ describe("tool-loop-detection", () => {
       recordToolLoopVeto(state, {
         toolName: fixture.toolName,
         toolParams: fixture.params,
+        detector: "generic_repeat",
       });
       recordToolLoopVeto(state, {
         toolName: fixture.toolName,
         toolParams: fixture.params,
+        detector: "generic_repeat",
       });
 
       const loopResult = detectToolCallLoop(state, fixture.toolName, fixture.params, config);
@@ -643,6 +645,7 @@ describe("tool-loop-detection", () => {
         recordToolLoopVeto(state, {
           toolName: fixture.toolName,
           toolParams: fixture.params,
+          detector: "generic_repeat",
         });
       }
 
@@ -679,6 +682,7 @@ describe("tool-loop-detection", () => {
       recordToolLoopVeto(state, {
         toolName: fixture.toolName,
         toolParams: fixture.params,
+        detector: "generic_repeat",
       });
       recordSuccessfulCall(
         state,
@@ -707,10 +711,47 @@ describe("tool-loop-detection", () => {
         recordFailedCall(state, toolName, params, new Error(`Tool ${toolName} not found`), index);
       }
       for (let index = 0; index < 3; index += 1) {
-        recordToolLoopVeto(state, { toolName, toolParams: params });
+        recordToolLoopVeto(state, {
+          toolName,
+          toolParams: params,
+          detector: "unknown_tool_repeat",
+        });
       }
 
       const loopResult = detectToolCallLoop(state, toolName, params, config);
+      expect(loopResult.stuck).toBe(true);
+      if (loopResult.stuck) {
+        expect(loopResult.detector).toBe("global_circuit_breaker");
+        expect(loopResult.count).toBe(5);
+      }
+    });
+
+    it("lets unknown-tool vetoes with changing arguments reach the global breaker", () => {
+      const state = createState();
+      const toolName = "missing_tool";
+      const config: ToolLoopDetectionConfig = {
+        enabled: true,
+        warningThreshold: 1,
+        unknownToolThreshold: 2,
+        criticalThreshold: 3,
+        globalCircuitBreakerThreshold: 5,
+      };
+      for (let index = 0; index < 2; index += 1) {
+        const params = { attempt: index };
+        recordFailedCall(state, toolName, params, new Error(`Tool ${toolName} not found`), index);
+      }
+      for (let index = 2; index < 5; index += 1) {
+        const params = { attempt: index };
+        const loopResult = detectToolCallLoop(state, toolName, params, config);
+        expect(loopResult.stuck && loopResult.detector).toBe("unknown_tool_repeat");
+        recordToolLoopVeto(state, {
+          toolName,
+          toolParams: params,
+          detector: "unknown_tool_repeat",
+        });
+      }
+
+      const loopResult = detectToolCallLoop(state, toolName, { attempt: 5 }, config);
       expect(loopResult.stuck).toBe(true);
       if (loopResult.stuck) {
         expect(loopResult.detector).toBe("global_circuit_breaker");
