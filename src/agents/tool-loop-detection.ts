@@ -424,8 +424,7 @@ function getNoProgressStreak(
     toolName: string;
     argsHash: string;
     resultHash?: string;
-    outcome?: ToolCallRecord["outcome"];
-    loopVetoResultHash?: string;
+    loopVetoCount?: number;
   }>,
   toolName: string,
   argsHash: string,
@@ -438,20 +437,18 @@ function getNoProgressStreak(
     if (!record || record.toolName !== toolName || record.argsHash !== argsHash) {
       continue;
     }
-    const resultHash =
-      record.outcome === "loop-veto" ? record.loopVetoResultHash : record.resultHash;
-    if (typeof resultHash !== "string" || !resultHash) {
+    if (typeof record.resultHash !== "string" || !record.resultHash) {
       continue;
     }
     if (!latestResultHash) {
-      latestResultHash = resultHash;
-      streak = 1;
+      latestResultHash = record.resultHash;
+      streak = 1 + (record.loopVetoCount ?? 0);
       continue;
     }
-    if (resultHash !== latestResultHash) {
+    if (record.resultHash !== latestResultHash) {
       break;
     }
-    streak += 1;
+    streak += 1 + (record.loopVetoCount ?? 0);
   }
 
   return { count: streak, latestResultHash };
@@ -579,13 +576,12 @@ export function detectToolCallLoop(
     return { stuck: false };
   }
   const history = selectHistoryForScope(state.toolCallHistory ?? [], scope);
-  const detectorHistory = history.filter((record) => record.outcome !== "loop-veto");
   const currentHash = hashToolCall(toolName, params);
-  const unknownToolStreak = getUnknownToolRepeatStreak(detectorHistory, toolName);
+  const unknownToolStreak = getUnknownToolRepeatStreak(history, toolName);
   const noProgress = getNoProgressStreak(history, toolName, currentHash);
   const noProgressStreak = noProgress.count;
   const knownPollTool = isKnownPollToolCall(toolName, params);
-  const pingPong = getPingPongStreak(detectorHistory, currentHash);
+  const pingPong = getPingPongStreak(history, currentHash);
 
   if (noProgressStreak >= resolvedConfig.globalCircuitBreakerThreshold) {
     log.error(
@@ -684,7 +680,7 @@ export function detectToolCallLoop(
 
   // Generic detector: warn on repeated identical calls, then block only after
   // outcomes prove the calls are not making progress.
-  const recentCount = detectorHistory.filter(
+  const recentCount = history.filter(
     (h) => h.toolName === toolName && h.argsHash === currentHash,
   ).length;
 
@@ -762,38 +758,26 @@ export function recordToolLoopVeto(
   params: {
     toolName: string;
     toolParams: unknown;
-    config?: ToolLoopDetectionConfig;
     runId?: string;
   },
 ): ToolCallRecord | undefined {
   const runId = normalizeRunId(params.runId);
-  const resolvedConfig = resolveLoopDetectionConfig(params.config);
   const argsHash = hashToolCall(params.toolName, params.toolParams);
   const history = state.toolCallHistory ?? [];
   for (let i = history.length - 1; i >= 0; i -= 1) {
     const call = history[i];
     if (
       !call?.resultHash ||
-      call.outcome === "loop-veto" ||
       call.toolName !== params.toolName ||
       call.argsHash !== argsHash ||
       normalizeRunId(call.runId) !== runId
     ) {
       continue;
     }
-    const record: ToolCallRecord = {
-      toolName: params.toolName,
-      argsHash,
-      ...(runId && { runId }),
-      outcome: "loop-veto",
-      loopVetoResultHash: call.resultHash,
-      timestamp: Date.now(),
-    };
-    history.push(record);
-    if (history.length > resolvedConfig.historySize) {
-      history.splice(0, history.length - resolvedConfig.historySize);
-    }
-    return record;
+    // Keep the detector history unchanged so unknown-tool and ping-pong critical
+    // states stay sticky, while the global no-progress count continues advancing.
+    call.loopVetoCount = (call.loopVetoCount ?? 0) + 1;
+    return call;
   }
   return undefined;
 }
