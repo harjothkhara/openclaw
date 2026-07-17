@@ -774,8 +774,8 @@ export function recordToolLoopVeto(
     ) {
       continue;
     }
-    // Keep the detector history unchanged so unknown-tool and ping-pong critical
-    // states stay sticky, while the global no-progress count continues advancing.
+    // Compact vetoes onto the proven outcome so the history cap cannot evict
+    // escalation evidence. A later changed outcome breaks the streak before this count.
     call.loopVetoCount = (call.loopVetoCount ?? 0) + 1;
     return call;
   }

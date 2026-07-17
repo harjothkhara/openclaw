@@ -615,6 +615,83 @@ describe("tool-loop-detection", () => {
       expect(state.toolCallHistory?.at(-1)?.loopVetoCount).toBe(2);
     });
 
+    it("keeps veto evidence when unrelated calls fill the history cap", () => {
+      const state = createState();
+      const fixture = createReadNoProgressFixture();
+      recordRepeatedSuccessfulCalls({
+        state,
+        toolName: fixture.toolName,
+        toolParams: fixture.params,
+        result: fixture.result,
+        count: CRITICAL_THRESHOLD,
+      });
+      for (let index = 0; index < TOOL_CALL_HISTORY_SIZE - CRITICAL_THRESHOLD; index += 1) {
+        recordSuccessfulCall(
+          state,
+          fixture.toolName,
+          { path: `/unrelated-${index}` },
+          { content: [{ type: "text", text: `result-${index}` }] },
+          index,
+        );
+      }
+
+      for (
+        let index = 0;
+        index < GLOBAL_CIRCUIT_BREAKER_THRESHOLD - CRITICAL_THRESHOLD;
+        index += 1
+      ) {
+        recordToolLoopVeto(state, {
+          toolName: fixture.toolName,
+          toolParams: fixture.params,
+        });
+      }
+
+      const loopResult = detectToolCallLoop(
+        state,
+        fixture.toolName,
+        fixture.params,
+        enabledLoopDetectionConfig,
+      );
+      expect(loopResult.stuck).toBe(true);
+      if (loopResult.stuck) {
+        expect(loopResult.detector).toBe("global_circuit_breaker");
+        expect(loopResult.count).toBe(GLOBAL_CIRCUIT_BREAKER_THRESHOLD);
+      }
+      expect(state.toolCallHistory).toHaveLength(TOOL_CALL_HISTORY_SIZE);
+    });
+
+    it("does not carry compacted vetoes across an intervening result change", () => {
+      const state = createState();
+      const fixture = createReadNoProgressFixture();
+      const config: ToolLoopDetectionConfig = {
+        enabled: true,
+        warningThreshold: 2,
+        criticalThreshold: 3,
+        globalCircuitBreakerThreshold: 5,
+      };
+      recordRepeatedSuccessfulCalls({
+        state,
+        toolName: fixture.toolName,
+        toolParams: fixture.params,
+        result: fixture.result,
+        count: 3,
+      });
+      recordToolLoopVeto(state, {
+        toolName: fixture.toolName,
+        toolParams: fixture.params,
+      });
+      recordSuccessfulCall(
+        state,
+        fixture.toolName,
+        fixture.params,
+        { content: [{ type: "text", text: "progress" }], details: { status: "changed" } },
+        99,
+      );
+
+      const afterProgress = detectToolCallLoop(state, fixture.toolName, fixture.params, config);
+      expect(afterProgress.stuck && afterProgress.detector).not.toBe("global_circuit_breaker");
+    });
+
     it("lets unknown-tool vetoes reach the global no-progress breaker", () => {
       const state = createState();
       const toolName = "missing_tool";
