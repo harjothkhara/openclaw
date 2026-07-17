@@ -260,12 +260,7 @@ describe("before_tool_call loop detection behavior", () => {
   function createGenericReadRepeatFixture() {
     const execute = vi.fn().mockResolvedValue({
       content: [{ type: "text", text: "same output" }],
-      details: {
-        status: "completed",
-        exitCode: 0,
-        aggregated: "same output",
-        durationMs: 123,
-      },
+      details: { ok: true },
     });
     return {
       tool: createWrappedTool("read", execute),
@@ -287,7 +282,7 @@ describe("before_tool_call loop detection behavior", () => {
   function expectCriticalLoopEvent(
     loopEvent: DiagnosticToolLoopEvent | undefined,
     params: {
-      detector: "ping_pong" | "known_poll_no_progress";
+      detector: "ping_pong" | "known_poll_no_progress" | "global_circuit_breaker";
       toolName: string;
       count?: number;
     },
@@ -389,39 +384,46 @@ describe("before_tool_call loop detection behavior", () => {
   });
 
   it("escalates repeated critical vetoes to the global circuit breaker", async () => {
-    const execute = vi.fn().mockResolvedValue({
-      content: [{ type: "text", text: "same output" }],
-      details: { ok: true },
+    await withToolLoopEvents(async (emitted) => {
+      const execute = vi.fn().mockResolvedValue({
+        content: [{ type: "text", text: "same output" }],
+        details: { ok: true },
+      });
+      const loopDetectionContext = {
+        ...enabledLoopDetectionContext,
+        loopDetection: {
+          enabled: true,
+          warningThreshold: 2,
+          criticalThreshold: 3,
+          globalCircuitBreakerThreshold: 5,
+        },
+      };
+      const tool = createWrappedTool("exec", execute, loopDetectionContext);
+      const params = { command: "grafana-api.sh datasources" };
+
+      for (let i = 0; i < 3; i += 1) {
+        await expectUnblockedToolExecution(tool, `exec-${i}`, params);
+      }
+
+      expectToolLoopBlockedResult(
+        await tool.execute("exec-critical-1", params, undefined, undefined),
+        "identical outcomes 3 times",
+      );
+      expectToolLoopBlockedResult(
+        await tool.execute("exec-critical-2", params, undefined, undefined),
+        "identical outcomes 4 times",
+      );
+      expectToolLoopBlockedResult(
+        await tool.execute("exec-global", params, undefined, undefined),
+        "global circuit breaker",
+      );
+      expect(execute).toHaveBeenCalledTimes(3);
+      expectCriticalLoopEvent(emitted.at(-1), {
+        detector: "global_circuit_breaker",
+        toolName: "exec",
+        count: 5,
+      });
     });
-    const loopDetectionContext = {
-      ...enabledLoopDetectionContext,
-      loopDetection: {
-        enabled: true,
-        warningThreshold: 2,
-        criticalThreshold: 3,
-        globalCircuitBreakerThreshold: 5,
-      },
-    };
-    const tool = createWrappedTool("exec", execute, loopDetectionContext);
-    const params = { command: "grafana-api.sh datasources" };
-
-    for (let i = 0; i < 3; i += 1) {
-      await expectUnblockedToolExecution(tool, `exec-${i}`, params);
-    }
-
-    expectToolLoopBlockedResult(
-      await tool.execute("exec-critical-1", params, undefined, undefined),
-      "identical outcomes 3 times",
-    );
-    expectToolLoopBlockedResult(
-      await tool.execute("exec-critical-2", params, undefined, undefined),
-      "identical outcomes 4 times",
-    );
-    expectToolLoopBlockedResult(
-      await tool.execute("exec-global", params, undefined, undefined),
-      "global circuit breaker",
-    );
-    expect(execute).toHaveBeenCalledTimes(3);
   });
 
   it("does nothing when loopDetection.enabled is false", async () => {

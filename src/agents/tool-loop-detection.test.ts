@@ -617,6 +617,36 @@ describe("tool-loop-detection", () => {
       expect(state.toolCallHistory?.at(-1)?.loopVetoCount).toBe(2);
     });
 
+    it("keeps compacted veto evidence isolated to its run", () => {
+      const state = createState();
+      const fixture = createReadNoProgressFixture();
+      for (const runId of ["run-1", "run-2"]) {
+        const toolCallId = `read-${runId}`;
+        recordToolCall(state, fixture.toolName, fixture.params, toolCallId, undefined, { runId });
+        recordToolCallOutcome(state, {
+          toolName: fixture.toolName,
+          toolParams: fixture.params,
+          toolCallId,
+          result: fixture.result,
+          runId,
+        });
+      }
+
+      recordToolLoopVeto(state, {
+        toolName: fixture.toolName,
+        toolParams: fixture.params,
+        evidence: "generic_repeat",
+        runId: "run-1",
+      });
+
+      expect(state.toolCallHistory?.find((record) => record.runId === "run-1")?.loopVetoCount).toBe(
+        1,
+      );
+      expect(
+        state.toolCallHistory?.find((record) => record.runId === "run-2")?.loopVetoCount,
+      ).toBeUndefined();
+    });
+
     it("keeps veto evidence when unrelated calls fill the history cap", () => {
       const state = createState();
       const fixture = createReadNoProgressFixture();

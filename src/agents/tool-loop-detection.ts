@@ -17,7 +17,7 @@ import { stableStringify } from "./stable-stringify.js";
 
 const log = createSubsystemLogger("agents/loop-detection");
 
-export type LoopDetectorKind =
+type LoopDetectorKind =
   | "generic_repeat"
   | "unknown_tool_repeat"
   | "known_poll_no_progress"
@@ -25,6 +25,12 @@ export type LoopDetectorKind =
   | "ping_pong";
 
 type LoopVetoEvidence = Exclude<LoopDetectorKind, "global_circuit_breaker">;
+
+type GlobalNoProgressEvidence = {
+  count: number;
+  vetoEvidence: LoopVetoEvidence;
+  description: string;
+};
 
 type LoopDetectionResult =
   | { stuck: false }
@@ -586,6 +592,38 @@ function canonicalPairKey(signatureA: string, signatureB: string): string {
   return [signatureA, signatureB].toSorted().join("|");
 }
 
+function resolveGlobalNoProgressEvidence(params: {
+  toolName: string;
+  noProgressStreak: number;
+  knownPollTool: boolean;
+  unknownToolStreak: ReturnType<typeof getUnknownToolRepeatStreak>;
+  pingPong: ReturnType<typeof getPingPongStreak>;
+}): GlobalNoProgressEvidence {
+  if (
+    params.pingPong.noProgressEvidence &&
+    params.pingPong.count >= params.noProgressStreak &&
+    params.pingPong.count >= params.unknownToolStreak.count
+  ) {
+    return {
+      count: params.pingPong.count,
+      vetoEvidence: "ping_pong",
+      description: `an alternating no-progress pattern involving ${params.toolName} and ${params.pingPong.pairedToolName ?? "another tool"} reached ${params.pingPong.count} attempts`,
+    };
+  }
+  if (params.unknownToolStreak.count >= params.noProgressStreak) {
+    return {
+      count: params.unknownToolStreak.count,
+      vetoEvidence: "unknown_tool_repeat",
+      description: `the unavailable tool ${params.unknownToolStreak.unknownToolName ?? params.toolName} was attempted ${params.unknownToolStreak.count} times without progress`,
+    };
+  }
+  return {
+    count: params.noProgressStreak,
+    vetoEvidence: params.knownPollTool ? "known_poll_no_progress" : "generic_repeat",
+    description: `${params.toolName} repeated identical no-progress outcomes ${params.noProgressStreak} times`,
+  };
+}
+
 /**
  * Detect if an agent is stuck in a repetitive tool call loop.
  * Checks if the same tool+params combination has been called excessively.
@@ -608,28 +646,13 @@ export function detectToolCallLoop(
   const noProgressStreak = noProgress.count;
   const knownPollTool = isKnownPollToolCall(toolName, params);
   const pingPong = getPingPongStreak(history, currentHash);
-  const globalNoProgress =
-    pingPong.noProgressEvidence &&
-    pingPong.count >= noProgressStreak &&
-    pingPong.count >= unknownToolStreak.count
-      ? {
-          count: pingPong.count,
-          vetoEvidence: "ping_pong" as const,
-          description: `an alternating no-progress pattern involving ${toolName} and ${pingPong.pairedToolName ?? "another tool"} reached ${pingPong.count} attempts`,
-        }
-      : unknownToolStreak.count >= noProgressStreak
-        ? {
-            count: unknownToolStreak.count,
-            vetoEvidence: "unknown_tool_repeat" as const,
-            description: `the unavailable tool ${unknownToolStreak.unknownToolName ?? toolName} was attempted ${unknownToolStreak.count} times without progress`,
-          }
-        : {
-            count: noProgressStreak,
-            vetoEvidence: knownPollTool
-              ? ("known_poll_no_progress" as const)
-              : ("generic_repeat" as const),
-            description: `${toolName} repeated identical no-progress outcomes ${noProgressStreak} times`,
-          };
+  const globalNoProgress = resolveGlobalNoProgressEvidence({
+    toolName,
+    noProgressStreak,
+    knownPollTool,
+    unknownToolStreak,
+    pingPong,
+  });
 
   if (globalNoProgress.count >= resolvedConfig.globalCircuitBreakerThreshold) {
     log.error(`Global circuit breaker triggered: ${globalNoProgress.description}`);
@@ -640,7 +663,6 @@ export function detectToolCallLoop(
       vetoEvidence: globalNoProgress.vetoEvidence,
       count: globalNoProgress.count,
       message: `CRITICAL: ${globalNoProgress.description}. Session execution blocked by global circuit breaker to prevent runaway loops.`,
-      warningKey: `global:${toolName}:${currentHash}:${noProgress.latestResultHash ?? "none"}`,
     };
   }
 
@@ -829,8 +851,9 @@ export function recordToolLoopVeto(
     ) {
       continue;
     }
-    // Compact vetoes onto the proven outcome so the history cap cannot evict
-    // escalation evidence. A later changed outcome breaks the streak before this count.
+    // Compact vetoes onto the proven outcome so veto-only loops preserve evidence in
+    // bounded history. Interleaved completed calls may evict this accepted window anchor.
+    // A later changed outcome breaks the streak before this count.
     call.loopVetoCount = (call.loopVetoCount ?? 0) + 1;
     return call;
   }
