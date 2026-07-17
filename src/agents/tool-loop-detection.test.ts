@@ -759,6 +759,59 @@ describe("tool-loop-detection", () => {
       }
     });
 
+    it("keeps changing unknown-tool retries on the configured unknown threshold", () => {
+      const state = createState();
+      const toolName = "missing_tool";
+      const config: ToolLoopDetectionConfig = {
+        enabled: true,
+        warningThreshold: 1,
+        unknownToolThreshold: 5,
+        criticalThreshold: 3,
+        globalCircuitBreakerThreshold: 8,
+      };
+      for (let index = 0; index < 3; index += 1) {
+        const params = { attempt: index };
+        recordFailedCall(state, toolName, params, new Error(`Tool ${toolName} not found`), index);
+      }
+
+      const loopResult = detectToolCallLoop(state, toolName, { attempt: 3 }, config);
+      expect(loopResult.stuck).toBe(false);
+    });
+
+    it("counts ping-pong vetoes toward the global breaker", () => {
+      const { state, readParams, listParams } = createPingPongFixture();
+      const config: ToolLoopDetectionConfig = {
+        enabled: true,
+        warningThreshold: 2,
+        criticalThreshold: 4,
+        globalCircuitBreakerThreshold: 6,
+      };
+      recordSuccessfulPingPongCalls({
+        state,
+        readParams,
+        listParams,
+        count: 3,
+        textAtIndex: (toolName) => `${toolName}-steady`,
+      });
+
+      for (let index = 0; index < 2; index += 1) {
+        const loopResult = detectToolCallLoop(state, "list", listParams, config);
+        expect(loopResult.stuck && loopResult.detector).toBe("ping_pong");
+        recordToolLoopVeto(state, {
+          toolName: "list",
+          toolParams: listParams,
+          detector: "ping_pong",
+        });
+      }
+
+      const loopResult = detectToolCallLoop(state, "list", listParams, config);
+      expect(loopResult.stuck).toBe(true);
+      if (loopResult.stuck) {
+        expect(loopResult.detector).toBe("global_circuit_breaker");
+        expect(loopResult.count).toBe(6);
+      }
+    });
+
     it("blocks repeated completed exec calls despite volatile runtime details", () => {
       const state = createState();
       const params = { command: "grafana-api.sh datasources" };
