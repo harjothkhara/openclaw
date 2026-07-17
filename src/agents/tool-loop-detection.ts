@@ -9,7 +9,11 @@ import {
   normalizeOptionalString as normalizeRunId,
 } from "@openclaw/normalization-core/string-coerce";
 import type { ToolLoopDetectionConfig } from "../config/types.tools.js";
-import type { SessionState, ToolCallRecord } from "../logging/diagnostic-session-state.js";
+import type {
+  SessionState,
+  ToolCallRecord,
+  ToolLoopVetoEvidence,
+} from "../logging/diagnostic-session-state.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import { isPlainObject } from "../utils.js";
 import { isMessagingToolSendAction } from "./embedded-agent-messaging.js";
@@ -17,19 +21,15 @@ import { stableStringify } from "./stable-stringify.js";
 
 const log = createSubsystemLogger("agents/loop-detection");
 
-type LoopDetectorKind =
-  | "generic_repeat"
-  | "unknown_tool_repeat"
-  | "known_poll_no_progress"
-  | "global_circuit_breaker"
-  | "ping_pong";
+type LoopDetectorKind = "global_circuit_breaker" | ToolLoopVetoEvidence;
 
-type LoopVetoEvidence = Exclude<LoopDetectorKind, "global_circuit_breaker">;
+type LoopVetoEvidence = ToolLoopVetoEvidence;
 
 type GlobalNoProgressEvidence = {
   count: number;
   vetoEvidence: LoopVetoEvidence;
   description: string;
+  pairedToolName?: string;
 };
 
 type LoopDetectionResult =
@@ -473,12 +473,7 @@ function getNoProgressStreak(
 }
 
 function getPingPongStreak(
-  history: Array<{
-    toolName: string;
-    argsHash: string;
-    resultHash?: string;
-    loopVetoCount?: number;
-  }>,
+  history: ToolCallRecord[],
   currentSignature: string,
 ): {
   count: number;
@@ -571,17 +566,8 @@ function getPingPongStreak(
     noProgressEvidence = false;
   }
 
-  let currentVetoCount = 0;
-  for (let i = history.length - 1; i >= 0; i -= 1) {
-    const call = history[i];
-    if (call?.argsHash === currentSignature) {
-      currentVetoCount = call.loopVetoCount ?? 0;
-      break;
-    }
-  }
-
   return {
-    count: alternatingTailCount + 1 + currentVetoCount,
+    count: Math.max(alternatingTailCount + 1, (last.loopSequenceCount ?? 0) + 1),
     pairedToolName: last.toolName,
     pairedSignature: last.argsHash,
     noProgressEvidence,
@@ -596,10 +582,12 @@ function resolveGlobalNoProgressEvidence(params: {
   toolName: string;
   noProgressStreak: number;
   knownPollTool: boolean;
+  pingPongEnabled: boolean;
   unknownToolStreak: ReturnType<typeof getUnknownToolRepeatStreak>;
   pingPong: ReturnType<typeof getPingPongStreak>;
 }): GlobalNoProgressEvidence {
   if (
+    params.pingPongEnabled &&
     params.pingPong.noProgressEvidence &&
     params.pingPong.count >= params.noProgressStreak &&
     params.pingPong.count >= params.unknownToolStreak.count
@@ -608,6 +596,9 @@ function resolveGlobalNoProgressEvidence(params: {
       count: params.pingPong.count,
       vetoEvidence: "ping_pong",
       description: `an alternating no-progress pattern involving ${params.toolName} and ${params.pingPong.pairedToolName ?? "another tool"} reached ${params.pingPong.count} attempts`,
+      ...(params.pingPong.pairedToolName && {
+        pairedToolName: params.pingPong.pairedToolName,
+      }),
     };
   }
   if (params.unknownToolStreak.count >= params.noProgressStreak) {
@@ -640,6 +631,20 @@ export function detectToolCallLoop(
     return { stuck: false };
   }
   const history = selectHistoryForScope(state.toolCallHistory ?? [], scope);
+  const latchedBreaker = history.findLast((record) => record.globalLoopBreaker)?.globalLoopBreaker;
+  if (latchedBreaker) {
+    return {
+      stuck: true,
+      level: "critical",
+      detector: "global_circuit_breaker",
+      vetoEvidence: latchedBreaker.vetoEvidence,
+      count: latchedBreaker.count,
+      message: latchedBreaker.message,
+      ...(latchedBreaker.pairedToolName && {
+        pairedToolName: latchedBreaker.pairedToolName,
+      }),
+    };
+  }
   const currentHash = hashToolCall(toolName, params);
   const unknownToolStreak = getUnknownToolRepeatStreak(history, toolName);
   const noProgress = getNoProgressStreak(history, toolName, currentHash);
@@ -650,6 +655,7 @@ export function detectToolCallLoop(
     toolName,
     noProgressStreak,
     knownPollTool,
+    pingPongEnabled: resolvedConfig.detectors.pingPong,
     unknownToolStreak,
     pingPong,
   });
@@ -663,6 +669,9 @@ export function detectToolCallLoop(
       vetoEvidence: globalNoProgress.vetoEvidence,
       count: globalNoProgress.count,
       message: `CRITICAL: ${globalNoProgress.description}. Session execution blocked by global circuit breaker to prevent runaway loops.`,
+      ...(globalNoProgress.pairedToolName && {
+        pairedToolName: globalNoProgress.pairedToolName,
+      }),
     };
   }
 
@@ -823,21 +832,32 @@ export function recordToolCall(
   }
 }
 
-/**
- * Count a critical loop veto against the latest matching no-progress outcome.
- */
+/** Preserve a critical veto against the latest matching no-progress outcome. */
 export function recordToolLoopVeto(
   state: SessionState,
   params: {
     toolName: string;
     toolParams: unknown;
     evidence: LoopVetoEvidence;
+    config?: ToolLoopDetectionConfig;
+    detector?: LoopDetectorKind;
+    count?: number;
+    message?: string;
+    pairedToolName?: string;
     runId?: string;
   },
 ): ToolCallRecord | undefined {
   const runId = normalizeRunId(params.runId);
   const argsHash = hashToolCall(params.toolName, params.toolParams);
   const history = state.toolCallHistory ?? [];
+  if (params.detector === "global_circuit_breaker") {
+    const existingLatch = history.findLast(
+      (call) => normalizeRunId(call.runId) === runId && call.globalLoopBreaker,
+    );
+    if (existingLatch) {
+      return existingLatch;
+    }
+  }
   for (let i = history.length - 1; i >= 0; i -= 1) {
     const call = history[i];
     const exactCall = call?.argsHash === argsHash;
@@ -850,6 +870,37 @@ export function recordToolLoopVeto(
       normalizeRunId(call.runId) !== runId
     ) {
       continue;
+    }
+    if (
+      params.detector === "global_circuit_breaker" &&
+      params.count !== undefined &&
+      params.message
+    ) {
+      call.globalLoopBreaker = {
+        count: params.count,
+        message: params.message,
+        vetoEvidence: params.evidence,
+        ...(params.pairedToolName && { pairedToolName: params.pairedToolName }),
+      };
+      return call;
+    }
+    if (params.evidence === "ping_pong") {
+      // Alternating vetoes need a bounded virtual attempt to preserve A/B ordering;
+      // exactCall ensures its copied outcome belongs to the current signature.
+      const vetoRecord: ToolCallRecord = {
+        toolName: params.toolName,
+        argsHash,
+        ...(runId && { runId }),
+        resultHash: call.resultHash,
+        ...(params.count !== undefined && { loopSequenceCount: params.count }),
+        timestamp: Date.now(),
+      };
+      history.push(vetoRecord);
+      const historySize = resolveLoopDetectionConfig(params.config).historySize;
+      if (history.length > historySize) {
+        history.splice(0, history.length - historySize);
+      }
+      return vetoRecord;
     }
     // Compact vetoes onto the proven outcome so veto-only loops preserve evidence in
     // bounded history. Interleaved completed calls may evict this accepted window anchor.

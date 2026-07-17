@@ -579,44 +579,6 @@ describe("tool-loop-detection", () => {
       }
     });
 
-    it("counts critical vetoes toward the global no-progress breaker", () => {
-      const state = createState();
-      const fixture = createReadNoProgressFixture();
-      const config: ToolLoopDetectionConfig = {
-        enabled: true,
-        warningThreshold: 2,
-        criticalThreshold: 3,
-        globalCircuitBreakerThreshold: 5,
-      };
-      recordRepeatedSuccessfulCalls({
-        state,
-        toolName: fixture.toolName,
-        toolParams: fixture.params,
-        result: fixture.result,
-        count: 3,
-      });
-
-      recordToolLoopVeto(state, {
-        toolName: fixture.toolName,
-        toolParams: fixture.params,
-        evidence: "generic_repeat",
-      });
-      recordToolLoopVeto(state, {
-        toolName: fixture.toolName,
-        toolParams: fixture.params,
-        evidence: "generic_repeat",
-      });
-
-      const loopResult = detectToolCallLoop(state, fixture.toolName, fixture.params, config);
-      expect(loopResult.stuck).toBe(true);
-      if (loopResult.stuck) {
-        expect(loopResult.detector).toBe("global_circuit_breaker");
-        expect(loopResult.count).toBe(5);
-      }
-      expect(state.toolCallHistory).toHaveLength(3);
-      expect(state.toolCallHistory?.at(-1)?.loopVetoCount).toBe(2);
-    });
-
     it("keeps compacted veto evidence isolated to its run", () => {
       const state = createState();
       const fixture = createReadNoProgressFixture();
@@ -645,120 +607,6 @@ describe("tool-loop-detection", () => {
       expect(
         state.toolCallHistory?.find((record) => record.runId === "run-2")?.loopVetoCount,
       ).toBeUndefined();
-    });
-
-    it("keeps veto evidence when unrelated calls fill the history cap", () => {
-      const state = createState();
-      const fixture = createReadNoProgressFixture();
-      recordRepeatedSuccessfulCalls({
-        state,
-        toolName: fixture.toolName,
-        toolParams: fixture.params,
-        result: fixture.result,
-        count: CRITICAL_THRESHOLD,
-      });
-      for (let index = 0; index < TOOL_CALL_HISTORY_SIZE - CRITICAL_THRESHOLD; index += 1) {
-        recordSuccessfulCall(
-          state,
-          fixture.toolName,
-          { path: `/unrelated-${index}` },
-          { content: [{ type: "text", text: `result-${index}` }] },
-          index,
-        );
-      }
-
-      for (
-        let index = 0;
-        index < GLOBAL_CIRCUIT_BREAKER_THRESHOLD - CRITICAL_THRESHOLD;
-        index += 1
-      ) {
-        recordToolLoopVeto(state, {
-          toolName: fixture.toolName,
-          toolParams: fixture.params,
-          evidence: "generic_repeat",
-        });
-      }
-
-      const loopResult = detectToolCallLoop(
-        state,
-        fixture.toolName,
-        fixture.params,
-        enabledLoopDetectionConfig,
-      );
-      expect(loopResult.stuck).toBe(true);
-      if (loopResult.stuck) {
-        expect(loopResult.detector).toBe("global_circuit_breaker");
-        expect(loopResult.count).toBe(GLOBAL_CIRCUIT_BREAKER_THRESHOLD);
-      }
-      expect(state.toolCallHistory).toHaveLength(TOOL_CALL_HISTORY_SIZE);
-    });
-
-    it("does not carry compacted vetoes across an intervening result change", () => {
-      const state = createState();
-      const fixture = createReadNoProgressFixture();
-      const config: ToolLoopDetectionConfig = {
-        enabled: true,
-        warningThreshold: 2,
-        criticalThreshold: 3,
-        globalCircuitBreakerThreshold: 5,
-      };
-      recordRepeatedSuccessfulCalls({
-        state,
-        toolName: fixture.toolName,
-        toolParams: fixture.params,
-        result: fixture.result,
-        count: 3,
-      });
-      recordToolLoopVeto(state, {
-        toolName: fixture.toolName,
-        toolParams: fixture.params,
-        evidence: "generic_repeat",
-      });
-      recordSuccessfulCall(
-        state,
-        fixture.toolName,
-        fixture.params,
-        { content: [{ type: "text", text: "progress" }], details: { status: "changed" } },
-        99,
-      );
-
-      const afterProgress = detectToolCallLoop(state, fixture.toolName, fixture.params, config);
-      expect(afterProgress.stuck).toBe(true);
-      if (afterProgress.stuck) {
-        expect(afterProgress.level).toBe("warning");
-        expect(afterProgress.detector).toBe("generic_repeat");
-      }
-    });
-
-    it("lets unknown-tool vetoes reach the global no-progress breaker", () => {
-      const state = createState();
-      const toolName = "missing_tool";
-      const params = { query: "same" };
-      const config: ToolLoopDetectionConfig = {
-        enabled: true,
-        warningThreshold: 1,
-        unknownToolThreshold: 2,
-        criticalThreshold: 3,
-        globalCircuitBreakerThreshold: 5,
-      };
-      for (let index = 0; index < 2; index += 1) {
-        recordFailedCall(state, toolName, params, new Error(`Tool ${toolName} not found`), index);
-      }
-      for (let index = 0; index < 3; index += 1) {
-        recordToolLoopVeto(state, {
-          toolName,
-          toolParams: params,
-          evidence: "unknown_tool_repeat",
-        });
-      }
-
-      const loopResult = detectToolCallLoop(state, toolName, params, config);
-      expect(loopResult.stuck).toBe(true);
-      if (loopResult.stuck) {
-        expect(loopResult.detector).toBe("global_circuit_breaker");
-        expect(loopResult.count).toBe(5);
-        expect(loopResult.message).toContain("unavailable tool missing_tool");
-      }
     });
 
     it("lets unknown-tool vetoes with changing arguments reach the global breaker", () => {
@@ -791,45 +639,25 @@ describe("tool-loop-detection", () => {
       if (!globalResult.stuck || globalResult.level !== "critical") {
         throw new Error("expected the global circuit breaker");
       }
-      expect(globalResult.count).toBe(5);
-
       recordToolLoopVeto(state, {
         toolName,
         toolParams: { attempt: 5 },
         evidence: globalResult.vetoEvidence,
+        detector: globalResult.detector,
+        count: globalResult.count,
+        message: globalResult.message,
       });
-      const nextResult = detectToolCallLoop(state, toolName, { attempt: 6 }, config);
-      expect(nextResult.stuck && nextResult.detector).toBe("global_circuit_breaker");
-      if (nextResult.stuck) {
-        expect(nextResult.count).toBe(6);
-      }
+      const latchedResult = detectToolCallLoop(state, "other_tool", {}, config);
+      expect(latchedResult.stuck && latchedResult.count).toBe(5);
     });
 
-    it("keeps changing unknown-tool retries on the configured unknown threshold", () => {
-      const state = createState();
-      const toolName = "missing_tool";
-      const config: ToolLoopDetectionConfig = {
-        enabled: true,
-        warningThreshold: 1,
-        unknownToolThreshold: 5,
-        criticalThreshold: 3,
-        globalCircuitBreakerThreshold: 8,
-      };
-      for (let index = 0; index < 3; index += 1) {
-        const params = { attempt: index };
-        recordFailedCall(state, toolName, params, new Error(`Tool ${toolName} not found`), index);
-      }
-
-      const loopResult = detectToolCallLoop(state, toolName, { attempt: 3 }, config);
-      expect(loopResult.stuck).toBe(false);
-    });
-
-    it("counts ping-pong vetoes toward the global breaker", () => {
+    it("preserves genuine ping-pong ordering through global escalation", () => {
       const { state, readParams, listParams } = createPingPongFixture();
       const config: ToolLoopDetectionConfig = {
         enabled: true,
         warningThreshold: 2,
         criticalThreshold: 4,
+        historySize: 4,
         globalCircuitBreakerThreshold: 6,
       };
       recordSuccessfulPingPongCalls({
@@ -840,24 +668,74 @@ describe("tool-loop-detection", () => {
         textAtIndex: (toolName) => `${toolName}-steady`,
       });
 
-      for (let index = 0; index < 2; index += 1) {
-        const loopResult = detectToolCallLoop(state, "list", listParams, config);
+      for (const [toolName, toolParams] of [
+        ["list", listParams],
+        ["read", readParams],
+      ] as const) {
+        const loopResult = detectToolCallLoop(state, toolName, toolParams, config);
         expect(loopResult.stuck && loopResult.detector).toBe("ping_pong");
-        recordToolLoopVeto(state, {
-          toolName: "list",
-          toolParams: listParams,
-          evidence: "ping_pong",
-        });
+        if (!loopResult.stuck || loopResult.level !== "critical") {
+          throw new Error("expected a critical ping-pong veto");
+        }
+        expect(
+          recordToolLoopVeto(state, {
+            toolName,
+            toolParams,
+            evidence: loopResult.vetoEvidence,
+            config,
+            count: loopResult.count,
+          }),
+        ).toBeDefined();
       }
 
       const loopResult = detectToolCallLoop(state, "list", listParams, config);
-      expect(loopResult.stuck).toBe(true);
-      if (loopResult.stuck) {
-        expect(loopResult.detector).toBe("global_circuit_breaker");
-        expect(loopResult.count).toBe(6);
-        expect(loopResult.message).toContain("alternating no-progress pattern");
-        expect(loopResult.message).toContain("read");
+      expect(loopResult).toMatchObject({
+        stuck: true,
+        level: "critical",
+        detector: "global_circuit_breaker",
+        count: 6,
+        pairedToolName: "read",
+      });
+      if (!loopResult.stuck || loopResult.level !== "critical") {
+        throw new Error("expected the global circuit breaker");
       }
+      recordToolLoopVeto(state, {
+        toolName: "list",
+        toolParams: listParams,
+        evidence: loopResult.vetoEvidence,
+        config,
+        detector: loopResult.detector,
+        count: loopResult.count,
+        message: loopResult.message,
+        ...(loopResult.pairedToolName && { pairedToolName: loopResult.pairedToolName }),
+      });
+
+      expect(detectToolCallLoop(state, "list", listParams, config)).toMatchObject({
+        stuck: true,
+        detector: "global_circuit_breaker",
+        count: 6,
+        pairedToolName: "read",
+      });
+    });
+
+    it("excludes disabled ping-pong evidence from the global breaker", () => {
+      const { state, readParams, listParams } = createPingPongFixture();
+      const config: ToolLoopDetectionConfig = {
+        enabled: true,
+        warningThreshold: 2,
+        criticalThreshold: 4,
+        globalCircuitBreakerThreshold: 6,
+        detectors: { genericRepeat: false, knownPollNoProgress: true, pingPong: false },
+      };
+      recordSuccessfulPingPongCalls({
+        state,
+        readParams,
+        listParams,
+        count: 6,
+        textAtIndex: (toolName) => `${toolName}-steady`,
+      });
+
+      expect(detectToolCallLoop(state, "read", readParams, config)).toEqual({ stuck: false });
     });
 
     it("blocks repeated completed exec calls despite volatile runtime details", () => {

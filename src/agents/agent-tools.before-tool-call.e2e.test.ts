@@ -41,6 +41,7 @@ import type { AnyAgentTool } from "./tools/common.js";
 import { callGatewayTool } from "./tools/gateway.js";
 
 const CRITICAL_THRESHOLD = 20;
+const GLOBAL_CIRCUIT_BREAKER_THRESHOLD = 30;
 
 vi.mock("../plugins/hook-runner-global.js", async () => {
   const actual = await vi.importActual<typeof import("../plugins/hook-runner-global.js")>(
@@ -536,7 +537,7 @@ describe("before_tool_call loop detection behavior", () => {
     });
   });
 
-  it("blocks ping-pong loops at critical threshold and emits critical diagnostic events", async () => {
+  it("escalates blocked ping-pong loops to the global breaker", async () => {
     await withToolLoopEvents(async (emitted) => {
       const { readTool, listTool } = createPingPongTools();
       await runPingPongSequence(readTool, listTool, CRITICAL_THRESHOLD - 1);
@@ -553,6 +554,29 @@ describe("before_tool_call loop detection behavior", () => {
       expectCriticalLoopEvent(loopEvent, {
         detector: "ping_pong",
         toolName: "list",
+      });
+
+      for (let index = CRITICAL_THRESHOLD; index < GLOBAL_CIRCUIT_BREAKER_THRESHOLD; index += 1) {
+        const alternatingTool = index % 2 === 0 ? readTool : listTool;
+        const alternatingParams = index % 2 === 0 ? { path: "/a.txt" } : { dir: "/workspace" };
+        await alternatingTool.execute(
+          `ping-pong-${index}`,
+          alternatingParams,
+          undefined,
+          undefined,
+        );
+      }
+
+      expectCriticalLoopEvent(emitted.at(-1), {
+        detector: "global_circuit_breaker",
+        toolName: "list",
+        count: GLOBAL_CIRCUIT_BREAKER_THRESHOLD,
+      });
+      await listTool.execute("ping-pong-sticky", { dir: "/workspace" }, undefined, undefined);
+      expectCriticalLoopEvent(emitted.at(-1), {
+        detector: "global_circuit_breaker",
+        toolName: "list",
+        count: GLOBAL_CIRCUIT_BREAKER_THRESHOLD,
       });
     });
   });

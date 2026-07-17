@@ -1465,12 +1465,18 @@ export async function runBeforeToolCallHook(args: {
             detector: loopResult.detector,
             count: loopResult.count,
             message: loopResult.message,
-            pairedToolName: loopResult.pairedToolName,
+            ...(loopResult.pairedToolName && { pairedToolName: loopResult.pairedToolName }),
           });
+          // Keep detection and recording synchronous so bounded history cannot trim evidence.
           recordToolLoopVeto(sessionState, {
             toolName,
             toolParams: params,
             evidence: loopResult.vetoEvidence,
+            config: args.ctx.loopDetection,
+            detector: loopResult.detector,
+            count: loopResult.count,
+            message: loopResult.message,
+            ...(loopResult.pairedToolName && { pairedToolName: loopResult.pairedToolName }),
             ...(args.ctx.runId && { runId: args.ctx.runId }),
           });
           return {

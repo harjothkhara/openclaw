@@ -1,6 +1,12 @@
 // Process-local session-state tracker used by diagnostic stuck-session detection.
 export type SessionStateValue = "idle" | "processing" | "waiting";
 
+export type ToolLoopVetoEvidence =
+  | "generic_repeat"
+  | "unknown_tool_repeat"
+  | "known_poll_no_progress"
+  | "ping_pong";
+
 /** Mutable diagnostic state for one session key or id. */
 export type SessionState = {
   sessionId?: string;
@@ -26,6 +32,13 @@ export type ToolCallRecord = {
   runId?: string;
   resultHash?: string;
   loopVetoCount?: number;
+  loopSequenceCount?: number;
+  globalLoopBreaker?: {
+    count: number;
+    message: string;
+    vetoEvidence: ToolLoopVetoEvidence;
+    pairedToolName?: string;
+  };
   unknownToolName?: string;
   timestamp: number;
 };
