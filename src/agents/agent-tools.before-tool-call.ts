@@ -1470,7 +1470,7 @@ export async function runBeforeToolCallHook(args: {
           recordToolLoopVeto(sessionState, {
             toolName,
             toolParams: params,
-            detector: loopResult.detector,
+            evidence: loopResult.vetoEvidence,
             ...(args.ctx.runId && { runId: args.ctx.runId }),
           });
           return {

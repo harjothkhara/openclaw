@@ -24,12 +24,24 @@ export type LoopDetectorKind =
   | "global_circuit_breaker"
   | "ping_pong";
 
+type LoopVetoEvidence = Exclude<LoopDetectorKind, "global_circuit_breaker">;
+
 type LoopDetectionResult =
   | { stuck: false }
   | {
       stuck: true;
-      level: "warning" | "critical";
+      level: "warning";
       detector: LoopDetectorKind;
+      count: number;
+      message: string;
+      pairedToolName?: string;
+      warningKey?: string;
+    }
+  | {
+      stuck: true;
+      level: "critical";
+      detector: LoopDetectorKind;
+      vetoEvidence: LoopVetoEvidence;
       count: number;
       message: string;
       pairedToolName?: string;
@@ -602,15 +614,20 @@ export function detectToolCallLoop(
     pingPong.count >= unknownToolStreak.count
       ? {
           count: pingPong.count,
+          vetoEvidence: "ping_pong" as const,
           description: `an alternating no-progress pattern involving ${toolName} and ${pingPong.pairedToolName ?? "another tool"} reached ${pingPong.count} attempts`,
         }
       : unknownToolStreak.count >= noProgressStreak
         ? {
             count: unknownToolStreak.count,
+            vetoEvidence: "unknown_tool_repeat" as const,
             description: `the unavailable tool ${unknownToolStreak.unknownToolName ?? toolName} was attempted ${unknownToolStreak.count} times without progress`,
           }
         : {
             count: noProgressStreak,
+            vetoEvidence: knownPollTool
+              ? ("known_poll_no_progress" as const)
+              : ("generic_repeat" as const),
             description: `${toolName} repeated identical no-progress outcomes ${noProgressStreak} times`,
           };
 
@@ -620,6 +637,7 @@ export function detectToolCallLoop(
       stuck: true,
       level: "critical",
       detector: "global_circuit_breaker",
+      vetoEvidence: globalNoProgress.vetoEvidence,
       count: globalNoProgress.count,
       message: `CRITICAL: ${globalNoProgress.description}. Session execution blocked by global circuit breaker to prevent runaway loops.`,
       warningKey: `global:${toolName}:${currentHash}:${noProgress.latestResultHash ?? "none"}`,
@@ -631,6 +649,7 @@ export function detectToolCallLoop(
       stuck: true,
       level: "critical",
       detector: "unknown_tool_repeat",
+      vetoEvidence: "unknown_tool_repeat",
       count: unknownToolStreak.count,
       message: `CRITICAL: attempted unavailable tool ${unknownToolStreak.unknownToolName ?? toolName} ${unknownToolStreak.count} times. Stop retrying that missing tool and answer without it.`,
       warningKey: `unknown-tool:${toolName}:${unknownToolStreak.unknownToolName ?? "unknown"}`,
@@ -647,6 +666,7 @@ export function detectToolCallLoop(
       stuck: true,
       level: "critical",
       detector: "known_poll_no_progress",
+      vetoEvidence: "known_poll_no_progress",
       count: noProgressStreak,
       message: `CRITICAL: Called ${toolName} with identical arguments and no progress ${noProgressStreak} times. This appears to be a stuck polling loop. Session execution blocked to prevent resource waste.`,
       warningKey: `poll:${toolName}:${currentHash}:${noProgress.latestResultHash ?? "none"}`,
@@ -685,6 +705,7 @@ export function detectToolCallLoop(
       stuck: true,
       level: "critical",
       detector: "ping_pong",
+      vetoEvidence: "ping_pong",
       count: pingPong.count,
       message: `CRITICAL: You are alternating between repeated tool-call patterns (${pingPong.count} consecutive calls) with no progress. This appears to be a stuck ping-pong loop. Session execution blocked to prevent resource waste.`,
       pairedToolName: pingPong.pairedToolName,
@@ -723,6 +744,7 @@ export function detectToolCallLoop(
       stuck: true,
       level: "critical",
       detector: "generic_repeat",
+      vetoEvidence: "generic_repeat",
       count: noProgressStreak,
       message: `CRITICAL: Called ${toolName} with identical arguments and identical outcomes ${noProgressStreak} times. Session execution blocked to prevent runaway loops.`,
       warningKey: `generic:${toolName}:${currentHash}:${noProgress.latestResultHash ?? "none"}`,
@@ -787,7 +809,7 @@ export function recordToolLoopVeto(
   params: {
     toolName: string;
     toolParams: unknown;
-    detector: LoopDetectorKind;
+    evidence: LoopVetoEvidence;
     runId?: string;
   },
 ): ToolCallRecord | undefined {
@@ -798,7 +820,7 @@ export function recordToolLoopVeto(
     const call = history[i];
     const exactCall = call?.argsHash === argsHash;
     const matchingUnknownToolCall =
-      params.detector === "unknown_tool_repeat" && Boolean(call?.unknownToolName);
+      params.evidence === "unknown_tool_repeat" && Boolean(call?.unknownToolName);
     if (
       !call?.resultHash ||
       call.toolName !== params.toolName ||

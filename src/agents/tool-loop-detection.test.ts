@@ -599,12 +599,12 @@ describe("tool-loop-detection", () => {
       recordToolLoopVeto(state, {
         toolName: fixture.toolName,
         toolParams: fixture.params,
-        detector: "generic_repeat",
+        evidence: "generic_repeat",
       });
       recordToolLoopVeto(state, {
         toolName: fixture.toolName,
         toolParams: fixture.params,
-        detector: "generic_repeat",
+        evidence: "generic_repeat",
       });
 
       const loopResult = detectToolCallLoop(state, fixture.toolName, fixture.params, config);
@@ -645,7 +645,7 @@ describe("tool-loop-detection", () => {
         recordToolLoopVeto(state, {
           toolName: fixture.toolName,
           toolParams: fixture.params,
-          detector: "generic_repeat",
+          evidence: "generic_repeat",
         });
       }
 
@@ -682,7 +682,7 @@ describe("tool-loop-detection", () => {
       recordToolLoopVeto(state, {
         toolName: fixture.toolName,
         toolParams: fixture.params,
-        detector: "generic_repeat",
+        evidence: "generic_repeat",
       });
       recordSuccessfulCall(
         state,
@@ -693,7 +693,11 @@ describe("tool-loop-detection", () => {
       );
 
       const afterProgress = detectToolCallLoop(state, fixture.toolName, fixture.params, config);
-      expect(afterProgress.stuck && afterProgress.detector).not.toBe("global_circuit_breaker");
+      expect(afterProgress.stuck).toBe(true);
+      if (afterProgress.stuck) {
+        expect(afterProgress.level).toBe("warning");
+        expect(afterProgress.detector).toBe("generic_repeat");
+      }
     });
 
     it("lets unknown-tool vetoes reach the global no-progress breaker", () => {
@@ -714,7 +718,7 @@ describe("tool-loop-detection", () => {
         recordToolLoopVeto(state, {
           toolName,
           toolParams: params,
-          detector: "unknown_tool_repeat",
+          evidence: "unknown_tool_repeat",
         });
       }
 
@@ -748,15 +752,26 @@ describe("tool-loop-detection", () => {
         recordToolLoopVeto(state, {
           toolName,
           toolParams: params,
-          detector: "unknown_tool_repeat",
+          evidence: "unknown_tool_repeat",
         });
       }
 
-      const loopResult = detectToolCallLoop(state, toolName, { attempt: 5 }, config);
-      expect(loopResult.stuck).toBe(true);
-      if (loopResult.stuck) {
-        expect(loopResult.detector).toBe("global_circuit_breaker");
-        expect(loopResult.count).toBe(5);
+      const globalResult = detectToolCallLoop(state, toolName, { attempt: 5 }, config);
+      expect(globalResult.stuck && globalResult.detector).toBe("global_circuit_breaker");
+      if (!globalResult.stuck || globalResult.level !== "critical") {
+        throw new Error("expected the global circuit breaker");
+      }
+      expect(globalResult.count).toBe(5);
+
+      recordToolLoopVeto(state, {
+        toolName,
+        toolParams: { attempt: 5 },
+        evidence: globalResult.vetoEvidence,
+      });
+      const nextResult = detectToolCallLoop(state, toolName, { attempt: 6 }, config);
+      expect(nextResult.stuck && nextResult.detector).toBe("global_circuit_breaker");
+      if (nextResult.stuck) {
+        expect(nextResult.count).toBe(6);
       }
     });
 
@@ -801,7 +816,7 @@ describe("tool-loop-detection", () => {
         recordToolLoopVeto(state, {
           toolName: "list",
           toolParams: listParams,
-          detector: "ping_pong",
+          evidence: "ping_pong",
         });
       }
 
