@@ -25,7 +25,8 @@ export type ToolCallRecord = {
   toolCallId?: string;
   runId?: string;
   resultHash?: string;
-  loopVetoCount?: number;
+  outcome?: "loop-veto";
+  loopVetoResultHash?: string;
   unknownToolName?: string;
   timestamp: number;
 };

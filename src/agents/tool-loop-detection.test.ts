@@ -611,8 +611,48 @@ describe("tool-loop-detection", () => {
         expect(loopResult.detector).toBe("global_circuit_breaker");
         expect(loopResult.count).toBe(5);
       }
-      expect(state.toolCallHistory).toHaveLength(3);
-      expect(state.toolCallHistory?.at(-1)?.loopVetoCount).toBe(2);
+      expect(state.toolCallHistory).toHaveLength(5);
+      expect(state.toolCallHistory?.at(-1)).toMatchObject({
+        outcome: "loop-veto",
+        loopVetoResultHash: state.toolCallHistory?.[0]?.resultHash,
+      });
+    });
+
+    it("does not carry ordered vetoes across an intervening result change", () => {
+      const state = createState();
+      const fixture = createReadNoProgressFixture();
+      const config: ToolLoopDetectionConfig = {
+        enabled: true,
+        warningThreshold: 2,
+        criticalThreshold: 3,
+        globalCircuitBreakerThreshold: 5,
+      };
+      recordRepeatedSuccessfulCalls({
+        state,
+        toolName: fixture.toolName,
+        toolParams: fixture.params,
+        result: fixture.result,
+        count: 3,
+      });
+      recordToolLoopVeto(state, {
+        toolName: fixture.toolName,
+        toolParams: fixture.params,
+        config,
+      });
+      recordSuccessfulCall(
+        state,
+        fixture.toolName,
+        fixture.params,
+        { content: [{ type: "text", text: "progress" }], details: { status: "changed" } },
+        99,
+      );
+
+      const afterProgress = detectToolCallLoop(state, fixture.toolName, fixture.params, config);
+      expect(afterProgress.stuck).toBe(true);
+      if (afterProgress.stuck) {
+        expect(afterProgress.level).toBe("warning");
+        expect(afterProgress.detector).toBe("generic_repeat");
+      }
     });
 
     it("lets unknown-tool vetoes reach the global no-progress breaker", () => {
@@ -629,11 +669,13 @@ describe("tool-loop-detection", () => {
       for (let index = 0; index < 2; index += 1) {
         recordFailedCall(state, toolName, params, new Error(`Tool ${toolName} not found`), index);
       }
+      let loopResult = detectToolCallLoop(state, toolName, params, config);
       for (let index = 0; index < 3; index += 1) {
-        recordToolLoopVeto(state, { toolName, toolParams: params });
+        expect(loopResult.stuck && loopResult.detector).toBe("unknown_tool_repeat");
+        recordToolLoopVeto(state, { toolName, toolParams: params, config });
+        loopResult = detectToolCallLoop(state, toolName, params, config);
       }
 
-      const loopResult = detectToolCallLoop(state, toolName, params, config);
       expect(loopResult.stuck).toBe(true);
       if (loopResult.stuck) {
         expect(loopResult.detector).toBe("global_circuit_breaker");
