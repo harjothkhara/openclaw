@@ -177,6 +177,11 @@ export function createToolAndSystemRecorders(runtime: DiagnosticsRecorderRuntime
     addRunAttrs(spanAttrs, evt);
     assignOtelToolIdentityAttributes(spanAttrs, evt);
     assignOtelToolContentAttributes(spanAttrs, toolContent, contentCapturePolicy);
+    if (evt.toolName === "exec" && evt.deferredProcessCompletion !== true) {
+      // Foreground exec completion is consumed before this event. Other exec
+      // targets have no later process event, so they must not retain a parent.
+      clearDeferredExecParentContext(evt, metadata);
+    }
     const span =
       takeTrackedTrustedSpan(evt, metadata) ??
       spanWithDuration("openclaw.tool.execution", spanAttrs, evt.durationMs, {

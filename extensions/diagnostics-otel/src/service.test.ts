@@ -3893,6 +3893,7 @@ describe("diagnostics-otel service", () => {
       runId: "run-1",
       toolName: "exec",
       durationMs: 20,
+      deferredProcessCompletion: true,
       trace: toolTrace,
     });
     await flushDiagnosticEvents();
@@ -3942,6 +3943,42 @@ describe("diagnostics-otel service", () => {
       message: "runtime-error",
     });
     expect(firstSpanEndTime("openclaw.exec")).toBeTypeOf("number");
+  });
+
+  test("clears an exec parent when no deferred process completion is expected", async () => {
+    await startOtelService({ traces: true, metrics: true });
+
+    const toolTrace = createDiagnosticTraceContext(createTestTrace(TOOL_SPAN_ID, CHILD_SPAN_ID));
+    emitTrustedDiagnosticEvent({
+      type: "tool.execution.started",
+      runId: "run-node",
+      toolName: "exec",
+      trace: toolTrace,
+    });
+    await emitTrustedAndFlush({
+      type: "tool.execution.completed",
+      runId: "run-node",
+      toolName: "exec",
+      durationMs: 20,
+      trace: toolTrace,
+    });
+
+    runWithDiagnosticTraceContext(toolTrace, () => {
+      emitInternalDiagnosticEventForTest({
+        type: "exec.process.completed",
+        target: "host",
+        mode: "child",
+        outcome: "failed",
+        durationMs: 1,
+        commandLength: 1,
+        failureKind: "runtime-error",
+      });
+    });
+    await flushDiagnosticEvents();
+
+    expect(startedSpanParentContexts("openclaw.exec")[0]?.spanId).not.toBe(
+      spanByName("openclaw.tool.execution").spanContext().spanId,
+    );
   });
 
   test("ends one tracked exec tool span and clears its deferred parent when blocked", async () => {

@@ -10,6 +10,11 @@ import { expectDefined } from "@openclaw/normalization-core";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { SessionEntry } from "../config/sessions.js";
 import { replaceSessionEntry } from "../config/sessions/session-accessor.js";
+import {
+  onInternalDiagnosticEvent,
+  waitForDiagnosticEventsDrained,
+  type DiagnosticEventPayload,
+} from "../infra/diagnostic-events.js";
 import { resetDiagnosticSessionStateForTest } from "../logging/diagnostic-session-state.js";
 import {
   initializeGlobalHookRunner,
@@ -207,6 +212,44 @@ describe("before_tool_call hook integration", () => {
       undefined,
       extensionContext,
     );
+  });
+
+  it("marks only background exec results for deferred process diagnostics", async () => {
+    beforeToolCallHook = installBeforeToolCallHook({ enabled: false });
+    const diagnosticEvents: DiagnosticEventPayload[] = [];
+    const unsubscribe = onInternalDiagnosticEvent((event) => diagnosticEvents.push(event));
+    const foreground = wrapToolWithBeforeToolCallHook(
+      asAgentTool({
+        name: "exec",
+        execute: vi.fn().mockResolvedValue({ content: [], details: { status: "completed" } }),
+      }),
+    );
+    const background = wrapToolWithBeforeToolCallHook(
+      asAgentTool({
+        name: "exec",
+        execute: vi.fn().mockResolvedValue({ content: [], details: { status: "running" } }),
+      }),
+    );
+
+    try {
+      await foreground.execute("call-foreground", {}, undefined, undefined);
+      await background.execute("call-background", {}, undefined, undefined);
+      await waitForDiagnosticEventsDrained();
+    } finally {
+      unsubscribe();
+    }
+
+    const completed = diagnosticEvents.filter(
+      (event): event is Extract<DiagnosticEventPayload, { type: "tool.execution.completed" }> =>
+        event.type === "tool.execution.completed" &&
+        (event.toolCallId === "call-foreground" || event.toolCallId === "call-background"),
+    );
+    expect(completed.map((event) => event.toolCallId)).toEqual([
+      "call-foreground",
+      "call-background",
+    ]);
+    expect(completed[0]?.deferredProcessCompletion).toBeUndefined();
+    expect(completed[1]?.deferredProcessCompletion).toBe(true);
   });
 
   it("returns first-class blocked tool result when hook returns block=true", async () => {

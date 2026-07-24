@@ -243,6 +243,57 @@ describe("runCodexAppServerAttempt dynamic tools", () => {
     expect(activeDiagnosticToolKeys(diagnosticEvents)).toEqual(new Set());
   });
 
+  it("assigns each dynamic tool call a distinct trace below the model call", async () => {
+    const harness = createStartedThreadHarness();
+    const diagnosticEvents: DiagnosticEventPayload[] = [];
+    const unsubscribeDiagnostics = onInternalDiagnosticEvent((event) =>
+      diagnosticEvents.push(event),
+    );
+    try {
+      const params = createParams(
+        path.join(tempDir, "session-traces.jsonl"),
+        path.join(tempDir, "workspace-traces"),
+      );
+      const run = runCodexAppServerAttempt(params);
+      await harness.waitForMethod("thread/start");
+
+      for (const callId of ["call-trace-1", "call-trace-2"]) {
+        await harness.handleServerRequest({
+          id: `request-${callId}`,
+          method: "item/tool/call",
+          params: {
+            threadId: "thread-1",
+            turnId: "turn-1",
+            callId,
+            namespace: null,
+            tool: "unknown",
+            arguments: {},
+          },
+        });
+      }
+      await harness.completeTurn({ threadId: "thread-1", turnId: "turn-1" });
+      await run;
+      await flushDiagnosticEvents();
+    } finally {
+      unsubscribeDiagnostics();
+    }
+
+    const starts = diagnosticEvents.filter(
+      (event): event is Extract<DiagnosticEventPayload, { type: "tool.execution.started" }> =>
+        event.type === "tool.execution.started" && event.toolName === "unknown",
+    );
+    expect(starts).toHaveLength(2);
+    expect(starts[0]?.trace?.traceId).toBe(starts[1]?.trace?.traceId);
+    expect(starts[0]?.trace?.parentSpanId).toBe(starts[1]?.trace?.parentSpanId);
+    expect(starts[0]?.trace?.spanId).not.toBe(starts[1]?.trace?.spanId);
+    for (const start of starts) {
+      const terminal = diagnosticEvents.find(
+        (event) => event.type === "tool.execution.error" && event.toolCallId === start.toolCallId,
+      );
+      expect(terminal?.trace).toEqual(start.trace);
+    }
+  });
+
   it("clears dynamic tool diagnostics after successful terminal responses", async () => {
     const diagnosticEvents: DiagnosticEventPayload[] = [];
     const unsubscribeDiagnostics = onInternalDiagnosticEvent((event) =>
@@ -685,6 +736,55 @@ describe("runCodexAppServerAttempt dynamic tools", () => {
         channelId: "-100123",
         toolName: "echo",
         toolCallId: "call-echo-1",
+      }),
+    );
+  });
+
+  it("retains deferred process completion on background exec diagnostics", async () => {
+    const execTool = createRuntimeDynamicTool("exec");
+    execTool.execute = vi.fn(async () => ({
+      content: [{ type: "text" as const, text: "running" }],
+      details: { status: "running" },
+    }));
+    const bridge = createCodexDynamicToolBridge({
+      tools: [execTool],
+      signal: new AbortController().signal,
+    });
+    const response = await bridge.handleToolCall({
+      threadId: "thread-1",
+      turnId: "turn-1",
+      callId: "call-exec-background",
+      namespace: null,
+      tool: "exec",
+      arguments: {},
+    });
+    const diagnosticEvents: DiagnosticEventPayload[] = [];
+    const unsubscribeDiagnostics = onInternalDiagnosticEvent((event) =>
+      diagnosticEvents.push(event),
+    );
+    try {
+      emitDynamicToolTerminalDiagnostic({
+        call: {
+          threadId: "thread-1",
+          turnId: "turn-1",
+          callId: "call-exec-background",
+          tool: "exec",
+          arguments: {},
+        },
+        response,
+        durationMs: 1,
+      });
+      await flushDiagnosticEvents();
+    } finally {
+      unsubscribeDiagnostics();
+    }
+
+    expect(Object.keys(response)).not.toContain("deferredProcessCompletion");
+    expect(diagnosticEvents).toContainEqual(
+      expect.objectContaining({
+        type: "tool.execution.completed",
+        toolCallId: "call-exec-background",
+        deferredProcessCompletion: true,
       }),
     );
   });

@@ -1,4 +1,9 @@
-import { onInternalDiagnosticEvent } from "openclaw/plugin-sdk/diagnostic-runtime";
+import {
+  createChildDiagnosticTraceContext,
+  freezeDiagnosticTraceContext,
+  onInternalDiagnosticEvent,
+  runWithDiagnosticTraceContext,
+} from "openclaw/plugin-sdk/diagnostic-runtime";
 import { isCodexAppServerApprovalRequest } from "./client.js";
 import { shouldAutoApproveCodexAppServerApprovals } from "./config.js";
 import {
@@ -42,7 +47,14 @@ export function createCodexAttemptServerRequestController(
   const { context } = prompt;
   const { runtime, attemptTools } = context;
   const { connection } = runtime;
-  const { params, computerUseConfig, runAbortController, appServer, sessionAgentId } = connection;
+  const {
+    params,
+    computerUseConfig,
+    runAbortController,
+    appServer,
+    sessionAgentId,
+    codexModelCallTrace,
+  } = connection;
   const {
     toolBridge,
     toolOutcomeOrdinals,
@@ -144,6 +156,9 @@ export function createCodexAttemptServerRequestController(
         return toCodexDynamicToolProtocolResponse(await replayedExecution) as JsonValue;
       }
       const toolCallOrdinal = allocateCodexToolOutcomeOrdinal?.(call.callId);
+      const toolTrace = freezeDiagnosticTraceContext(
+        createChildDiagnosticTraceContext(codexModelCallTrace),
+      );
       armCompletionWatchOnResponse = true;
       markCurrentTurnRequestProgress();
       state.turnCrossedToolHandoff = true;
@@ -171,6 +186,7 @@ export function createCodexAttemptServerRequestController(
         runId: params.runId,
         sessionId: params.sessionId,
         sessionKey: params.sessionKey,
+        trace: toolTrace,
       });
       const toolMeta = inferCodexDynamicToolMeta(
         call,
@@ -209,30 +225,32 @@ export function createCodexAttemptServerRequestController(
       });
       try {
         const { execution } = openClawDynamicToolExecutions.claim(call, () =>
-          handleDynamicToolCallWithTimeout({
-            call,
-            toolBridge,
-            signal,
-            timeoutMs: dynamicToolTimeoutMs,
-            toolMeta,
-            toolCallOrdinal,
-            onAgentToolResult: params.onAgentToolResult,
-            observeToolTerminal: params.observeToolTerminal,
-            onFallbackSelected: () => {
-              if (toolCallOrdinal !== undefined) {
-                suppressedDynamicToolOutcomeOrdinals.add(toolCallOrdinal);
-              }
-            },
-            onTimeout: () => {
-              trajectoryRecorder?.recordEvent("tool.timeout", {
-                threadId: call.threadId,
-                turnId: call.turnId,
-                toolCallId: call.callId,
-                name: call.tool,
-                timeoutMs: dynamicToolTimeoutMs,
-              });
-            },
-          }),
+          runWithDiagnosticTraceContext(toolTrace, () =>
+            handleDynamicToolCallWithTimeout({
+              call,
+              toolBridge,
+              signal,
+              timeoutMs: dynamicToolTimeoutMs,
+              toolMeta,
+              toolCallOrdinal,
+              onAgentToolResult: params.onAgentToolResult,
+              observeToolTerminal: params.observeToolTerminal,
+              onFallbackSelected: () => {
+                if (toolCallOrdinal !== undefined) {
+                  suppressedDynamicToolOutcomeOrdinals.add(toolCallOrdinal);
+                }
+              },
+              onTimeout: () => {
+                trajectoryRecorder?.recordEvent("tool.timeout", {
+                  threadId: call.threadId,
+                  turnId: call.turnId,
+                  toolCallId: call.callId,
+                  name: call.tool,
+                  timeoutMs: dynamicToolTimeoutMs,
+                });
+              },
+            }),
+          ),
         );
         const response = await execution;
         const protocolResponse = toCodexDynamicToolProtocolResponse(response);
@@ -288,6 +306,7 @@ export function createCodexAttemptServerRequestController(
             sessionId: params.sessionId,
             sessionKey: params.sessionKey,
             durationMs: toolDurationMs,
+            trace: toolTrace,
           });
         }
         pendingOpenClawDynamicToolCompletionIds.delete(call.callId);
@@ -322,6 +341,7 @@ export function createCodexAttemptServerRequestController(
             sessionId: params.sessionId,
             sessionKey: params.sessionKey,
             durationMs: Math.max(0, Date.now() - toolStartedAt),
+            trace: toolTrace,
           });
         }
         throw error;

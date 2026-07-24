@@ -562,6 +562,7 @@ type ResolvedToolTerminalDiagnostic =
   | {
       type: "tool.execution.completed";
       durationMs: number;
+      deferredProcessCompletion?: boolean;
     }
   | {
       type: "tool.execution.error";
@@ -573,12 +574,21 @@ type ResolvedToolTerminalDiagnostic =
 function resolveToolResultTerminalDiagnostic(
   result: unknown,
   durationMs: number,
+  toolName: string,
 ): ResolvedToolTerminalDiagnostic {
   // Tool execution may resolve with a structured failure. Classify that here
   // so every diagnostic consumer sees one canonical terminal outcome.
   const failureKind = resolveToolResultFailureKind(result);
   if (!failureKind) {
-    return { type: "tool.execution.completed", durationMs };
+    const details =
+      isPlainObject(result) && isPlainObject(result.details) ? result.details : undefined;
+    return {
+      type: "tool.execution.completed",
+      durationMs,
+      ...(toolName === "exec" && details?.status === "running"
+        ? { deferredProcessCompletion: true }
+        : {}),
+    };
   }
   if (failureKind === "blocked") {
     return {
@@ -2016,7 +2026,11 @@ export function wrapToolWithBeforeToolCallHook(
               toolCallId,
             });
           }
-          const terminalEvent = resolveToolResultTerminalDiagnostic(result, durationMs);
+          const terminalEvent = resolveToolResultTerminalDiagnostic(
+            result,
+            durationMs,
+            normalizedToolName,
+          );
           emitTrustedDiagnosticEventWithPrivateData(
             {
               ...eventBase,

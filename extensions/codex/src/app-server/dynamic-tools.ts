@@ -52,6 +52,7 @@ import {
   createFailedDynamicToolResponse,
   type CodexDynamicToolRuntimeResponse,
   withDynamicToolExecutionState,
+  withDynamicToolDeferredProcessCompletion,
   withDynamicToolTranscriptDetails,
 } from "./dynamic-tool-response-state.js";
 import { invalidInlineImageText, sanitizeInlineImageDataUrl } from "./image-payload-sanitizer.js";
@@ -790,6 +791,11 @@ export function createCodexDynamicToolBridge(params: {
         const asyncStarted =
           isAsyncStartedToolResult(rawResult) || isAsyncStartedToolResult(result);
         withDynamicToolAsyncStarted(response, asyncStarted);
+        withDynamicToolDeferredProcessCompletion(
+          response,
+          toolName === "exec" &&
+            (isRunningExecToolResult(rawResult) || isRunningExecToolResult(result)),
+        );
         const replaySafe =
           executionPrevented ||
           (!asyncStarted &&
@@ -1339,6 +1345,10 @@ function isToolResultYield(result: AgentToolResult<unknown>): boolean {
 function isAsyncStartedToolResult(result: AgentToolResult<unknown>): boolean {
   const details = result.details;
   return isRecord(details) && details.async === true && details.status === "started";
+}
+function isRunningExecToolResult(result: AgentToolResult<unknown>): boolean {
+  const details = result.details;
+  return isRecord(details) && details.status === "running";
 }
 function withDiagnosticTerminalType<T extends CodexDynamicToolCallResponse>(
   response: T,

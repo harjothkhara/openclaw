@@ -6,11 +6,28 @@ import type {
 
 /** OpenClaw-only dynamic-tool facts that never cross into the Codex protocol. */
 export type CodexDynamicToolRuntimeResponse = CodexDynamicToolCallResponse & {
+  deferredProcessCompletion?: boolean;
   executionStarted?: boolean;
   executedArguments?: Record<string, unknown>;
   transcriptDetails?: { mcpAppPreview: unknown };
   terminalResolution?: ReturnType<NonNullable<EmbeddedRunAttemptParams["observeToolTerminal"]>>;
 };
+
+/** Retains whether a tool-owned process will complete after the tool response. */
+export function withDynamicToolDeferredProcessCompletion<T extends CodexDynamicToolRuntimeResponse>(
+  response: T,
+  deferred: boolean,
+): T {
+  if (!deferred) {
+    return response;
+  }
+  Object.defineProperty(response, "deferredProcessCompletion", {
+    configurable: true,
+    enumerable: false,
+    value: true,
+  });
+  return response;
+}
 
 /** Retains the host-owned app preview without adding it to Codex's response payload. */
 export function withDynamicToolTranscriptDetails<T extends CodexDynamicToolRuntimeResponse>(

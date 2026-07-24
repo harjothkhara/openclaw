@@ -493,6 +493,8 @@ export type DiagnosticToolExecutionStartedEvent = DiagnosticToolExecutionBaseEve
 export type DiagnosticToolExecutionCompletedEvent = DiagnosticToolExecutionBaseEvent & {
   type: "tool.execution.completed";
   durationMs: number;
+  /** A tool-owned process will emit its terminal diagnostic after this event. */
+  deferredProcessCompletion?: boolean;
 };
 
 export type DiagnosticToolExecutionErrorEvent = DiagnosticToolExecutionBaseEvent & {

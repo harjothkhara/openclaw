@@ -1,8 +1,12 @@
 /**
  * Trusted diagnostics emitted around Codex dynamic tool execution lifecycle.
  */
-import { emitTrustedDiagnosticEvent } from "openclaw/plugin-sdk/diagnostic-runtime";
-import type { CodexDynamicToolCallParams, CodexDynamicToolCallResponse } from "./protocol.js";
+import {
+  emitTrustedDiagnosticEvent,
+  type DiagnosticTraceContext,
+} from "openclaw/plugin-sdk/diagnostic-runtime";
+import type { CodexDynamicToolRuntimeResponse } from "./dynamic-tool-response-state.js";
+import type { CodexDynamicToolCallParams } from "./protocol.js";
 
 type DynamicToolDiagnosticContext = {
   call: CodexDynamicToolCallParams;
@@ -10,6 +14,7 @@ type DynamicToolDiagnosticContext = {
   runId?: string | undefined;
   sessionId?: string | undefined;
   sessionKey?: string | undefined;
+  trace?: DiagnosticTraceContext | undefined;
 };
 
 /** Emits a start event for one Codex dynamic tool call. */
@@ -22,6 +27,7 @@ export function emitDynamicToolStartedDiagnostic(params: DynamicToolDiagnosticCo
     sessionKey: params.sessionKey,
     toolName: params.call.tool,
     toolCallId: params.call.callId,
+    trace: params.trace,
   });
 }
 
@@ -43,13 +49,14 @@ export function emitDynamicToolErrorDiagnostic(
     durationMs: params.durationMs,
     errorCategory: "codex_dynamic_tool_error",
     terminalReason: params.terminalReason ?? "failed",
+    trace: params.trace,
   });
 }
 
 /** Emits the terminal event matching a dynamic tool response's diagnostic type. */
 export function emitDynamicToolTerminalDiagnostic(
   params: DynamicToolDiagnosticContext & {
-    response: CodexDynamicToolCallResponse;
+    response: CodexDynamicToolRuntimeResponse;
     durationMs: number;
   },
 ): void {
@@ -65,6 +72,8 @@ export function emitDynamicToolTerminalDiagnostic(
       toolName: params.call.tool,
       toolCallId: params.call.callId,
       durationMs: params.durationMs,
+      deferredProcessCompletion: params.response.deferredProcessCompletion,
+      trace: params.trace,
     });
     return;
   }
@@ -79,6 +88,7 @@ export function emitDynamicToolTerminalDiagnostic(
       toolCallId: params.call.callId,
       deniedReason: "plugin-before-tool-call",
       reason: "Tool call blocked",
+      trace: params.trace,
     });
     return;
   }
