@@ -855,12 +855,16 @@ describe("dispatchReplyFromConfig", () => {
       processedTrace = getActiveDiagnosticTraceContext();
     });
 
-    await dispatchReplyFromConfig({
-      ctx,
-      cfg,
-      dispatcher: createDispatcher(),
-      replyResolver,
-    });
+    try {
+      await dispatchReplyFromConfig({
+        ctx,
+        cfg,
+        dispatcher: createDispatcher(),
+        replyResolver,
+      });
+    } finally {
+      diagnosticMocks.logMessageProcessed.mockReset();
+    }
 
     expect(replyResolver).toHaveBeenCalledOnce();
     expect(resolverTrace?.traceId).toBeTruthy();

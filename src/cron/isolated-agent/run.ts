@@ -31,8 +31,10 @@ import {
 import { emitTrustedDiagnosticEvent, isDiagnosticsEnabled } from "../../infra/diagnostic-events.js";
 import {
   createChildDiagnosticTraceContext,
+  createDiagnosticTraceContext,
   freezeDiagnosticTraceContext,
-  runWithDiagnosticTraceContextIfAbsent,
+  getActiveDiagnosticTraceContext,
+  runWithDiagnosticTraceContext,
 } from "../../infra/diagnostic-trace-context.js";
 import { isFastTestRuntimeEnv } from "../../infra/env.js";
 import {
@@ -1714,7 +1716,12 @@ type RunCronIsolatedAgentTurnParams = {
 export async function runCronIsolatedAgentTurn(
   params: RunCronIsolatedAgentTurnParams,
 ): Promise<RunCronAgentTurnResult> {
-  return await runWithDiagnosticTraceContextIfAbsent(() => runCronIsolatedAgentTurnInTrace(params));
+  if (getActiveDiagnosticTraceContext()) {
+    return await runCronIsolatedAgentTurnInTrace(params);
+  }
+  return await runWithDiagnosticTraceContext(createDiagnosticTraceContext(), () =>
+    runCronIsolatedAgentTurnInTrace(params),
+  );
 }
 
 async function runCronIsolatedAgentTurnInTrace(

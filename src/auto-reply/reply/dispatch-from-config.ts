@@ -1,5 +1,9 @@
 /** Main reply dispatch pipeline from finalized config/context to delivery payloads. */
-import { runWithDiagnosticTraceContextIfAbsent } from "../../infra/diagnostic-trace-context.js";
+import {
+  createDiagnosticTraceContext,
+  getActiveDiagnosticTraceContext,
+  runWithDiagnosticTraceContext,
+} from "../../infra/diagnostic-trace-context.js";
 import { isDispatchReplyOperationAbortedError } from "./dispatch-from-config.abort.js";
 import { createInboundMessageAuditTerminal } from "./dispatch-from-config.audit.js";
 import { chooseDispatchRoute } from "./dispatch-from-config.choose-route.js";
@@ -23,7 +27,12 @@ export type { DispatchFromConfigResult } from "./dispatch-from-config.types.js";
 export async function dispatchReplyFromConfig(
   params: DispatchFromConfigParams,
 ): Promise<DispatchFromConfigResult> {
-  return await runWithDiagnosticTraceContextIfAbsent(() => dispatchReplyFromConfigInTrace(params));
+  if (getActiveDiagnosticTraceContext()) {
+    return await dispatchReplyFromConfigInTrace(params);
+  }
+  return await runWithDiagnosticTraceContext(createDiagnosticTraceContext(), () =>
+    dispatchReplyFromConfigInTrace(params),
+  );
 }
 
 async function dispatchReplyFromConfigInTrace(

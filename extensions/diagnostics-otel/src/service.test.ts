@@ -3878,7 +3878,7 @@ describe("diagnostics-otel service", () => {
     ).toHaveLength(1);
   });
 
-  test("exports exec process spans without command text", async () => {
+  test("exports delayed exec process spans under the completed tool span without command text", async () => {
     await startOtelService({ traces: true, metrics: true });
 
     const toolTrace = createDiagnosticTraceContext(createTestTrace(TOOL_SPAN_ID, CHILD_SPAN_ID));
@@ -3888,8 +3888,17 @@ describe("diagnostics-otel service", () => {
       toolName: "exec",
       trace: toolTrace,
     });
+    emitTrustedDiagnosticEvent({
+      type: "tool.execution.completed",
+      runId: "run-1",
+      toolName: "exec",
+      durationMs: 20,
+      trace: toolTrace,
+    });
+    await flushDiagnosticEvents();
+
     runWithDiagnosticTraceContext(toolTrace, () => {
-      emitTrustedDiagnosticEvent({
+      emitInternalDiagnosticEventForTest({
         type: "exec.process.completed",
         target: "host",
         mode: "child",
@@ -3933,6 +3942,49 @@ describe("diagnostics-otel service", () => {
       message: "runtime-error",
     });
     expect(firstSpanEndTime("openclaw.exec")).toBeTypeOf("number");
+  });
+
+  test("ends one tracked exec tool span and clears its deferred parent when blocked", async () => {
+    await startOtelService({ traces: true, metrics: true });
+
+    const toolTrace = createDiagnosticTraceContext(createTestTrace(TOOL_SPAN_ID, CHILD_SPAN_ID));
+    emitTrustedDiagnosticEvent({
+      type: "tool.execution.started",
+      runId: "run-1",
+      toolName: "exec",
+      trace: toolTrace,
+    });
+    await emitTrustedAndFlush({
+      type: "tool.execution.blocked",
+      runId: "run-1",
+      toolName: "exec",
+      deniedReason: "tool_result_blocked",
+      reason: "tool_result_blocked",
+      trace: toolTrace,
+    });
+
+    const toolSpans = telemetryState.spans.filter(
+      (span) => span.name === "openclaw.tool.execution",
+    );
+    expect(toolSpans).toHaveLength(1);
+    expect(toolSpans[0]?.end).toHaveBeenCalledTimes(1);
+
+    runWithDiagnosticTraceContext(toolTrace, () => {
+      emitInternalDiagnosticEventForTest({
+        type: "exec.process.completed",
+        target: "host",
+        mode: "child",
+        outcome: "failed",
+        durationMs: 1,
+        commandLength: 1,
+        failureKind: "runtime-error",
+      });
+    });
+    await flushDiagnosticEvents();
+
+    expect(startedSpanParentContexts("openclaw.exec")[0]?.spanId).not.toBe(
+      toolSpans[0]?.spanContext().spanId,
+    );
   });
 
   test("exports message delivery spans and metrics with low-cardinality attributes", async () => {

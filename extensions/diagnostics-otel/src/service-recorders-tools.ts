@@ -2,6 +2,7 @@ import { SpanStatusCode } from "@opentelemetry/api";
 import { redactSensitiveText } from "../api.js";
 import type { DiagnosticEventMetadata, DiagnosticEventPayload } from "../api.js";
 import { lowCardinalityAttr } from "./service-attributes.js";
+import { MAX_RETAINED_TRUSTED_SPAN_CONTEXTS } from "./service-constants.js";
 import { positiveFiniteNumber } from "./service-genai-attributes.js";
 import {
   assignOtelToolContentAttributes,
@@ -29,6 +30,8 @@ export function createToolAndSystemRecorders(runtime: DiagnosticsRecorderRuntime
     spanWithDuration,
     activeTrustedParentContext,
     activeInternalOrTrustedContext,
+    trustedTraceContext,
+    internalOrTrustedTraceContext,
     trackTrustedSpan,
     takeTrackedTrustedSpan,
     setSpanAttrs,
@@ -37,6 +40,41 @@ export function createToolAndSystemRecorders(runtime: DiagnosticsRecorderRuntime
     contentCapturePolicy,
     tracesEnabled,
   } = runtime;
+
+  type DeferredExecParentContext = NonNullable<ReturnType<typeof activeInternalOrTrustedContext>>;
+  const deferredExecParentContexts = new Map<string, DeferredExecParentContext>();
+  const traceKey = (traceId: string, spanId: string) => `${traceId}:${spanId}`;
+  const retainDeferredExecParentContext = (
+    traceContext: ReturnType<typeof trustedTraceContext>,
+    parentContext: DeferredExecParentContext | undefined,
+  ) => {
+    if (!traceContext?.spanId || !parentContext) {
+      return;
+    }
+    const key = traceKey(traceContext.traceId, traceContext.spanId);
+    deferredExecParentContexts.delete(key);
+    deferredExecParentContexts.set(key, parentContext);
+    while (deferredExecParentContexts.size > MAX_RETAINED_TRUSTED_SPAN_CONTEXTS) {
+      const oldestKey = deferredExecParentContexts.keys().next().value;
+      if (!oldestKey) {
+        break;
+      }
+      deferredExecParentContexts.delete(oldestKey);
+    }
+  };
+  const takeDeferredExecParentContext = (
+    evt: DiagnosticEventPayload,
+    metadata: DiagnosticEventMetadata,
+  ) => {
+    const traceContext = internalOrTrustedTraceContext(evt, metadata);
+    if (!traceContext?.spanId) {
+      return undefined;
+    }
+    const key = traceKey(traceContext.traceId, traceContext.spanId);
+    const parentContext = deferredExecParentContexts.get(key);
+    deferredExecParentContexts.delete(key);
+    return parentContext;
+  };
 
   const toolExecutionBaseAttrs = (
     evt: Extract<
@@ -106,6 +144,14 @@ export function createToolAndSystemRecorders(runtime: DiagnosticsRecorderRuntime
         startTimeMs: evt.ts,
       }),
     );
+    if (evt.toolName === "exec") {
+      // Exec can outlive its tool span after backgrounding. Retain the real
+      // OTel context from start until the process completion event consumes it.
+      retainDeferredExecParentContext(
+        trustedTraceContext(evt, metadata),
+        activeInternalOrTrustedContext(evt, metadata),
+      );
+    }
   };
 
   const recordToolExecutionCompleted = (
@@ -145,6 +191,9 @@ export function createToolAndSystemRecorders(runtime: DiagnosticsRecorderRuntime
     if (!tracesEnabled) {
       return;
     }
+    if (evt.toolName === "exec") {
+      takeDeferredExecParentContext(evt, metadata);
+    }
     const spanAttrs: Record<string, string | number | boolean> = { ...attrs };
     addRunAttrs(spanAttrs, evt);
     assignOtelToolIdentityAttributes(spanAttrs, evt);
@@ -177,6 +226,9 @@ export function createToolAndSystemRecorders(runtime: DiagnosticsRecorderRuntime
     if (!tracesEnabled) {
       return;
     }
+    if (evt.toolName === "exec") {
+      takeDeferredExecParentContext(evt, metadata);
+    }
     const spanAttrs: Record<string, string | number | boolean> = {
       ...toolExecutionBaseAttrs(evt),
       "openclaw.outcome": "blocked",
@@ -184,10 +236,14 @@ export function createToolAndSystemRecorders(runtime: DiagnosticsRecorderRuntime
     };
     addRunAttrs(spanAttrs, evt);
     assignOtelToolIdentityAttributes(spanAttrs, evt);
-    const span = spanWithDuration("openclaw.tool.execution", spanAttrs, 0, {
-      parentContext: activeTrustedParentContext(evt, metadata),
-      endTimeMs: evt.ts,
-    });
+    // A structured blocked result can follow a started event. Finish that
+    // tracked span instead of leaking it and exporting a duplicate span.
+    const span =
+      takeTrackedTrustedSpan(evt, metadata) ??
+      spanWithDuration("openclaw.tool.execution", spanAttrs, 0, {
+        parentContext: activeTrustedParentContext(evt, metadata),
+        endTimeMs: evt.ts,
+      });
     setSpanAttrs(span, spanAttrs);
     span.end(evt.ts);
   };
@@ -238,10 +294,12 @@ export function createToolAndSystemRecorders(runtime: DiagnosticsRecorderRuntime
       spanAttrs["openclaw.exec.timed_out"] = evt.timedOut;
     }
 
-    // Process completion may arrive after ambient OTel context is gone, so
-    // resolve the producer's diagnostic scope to keep exec under its tool span.
+    // Process completion may arrive after the tool span and ambient context
+    // are gone, so consume the retained real OTel parent before falling back.
     const span = spanWithDuration("openclaw.exec", spanAttrs, evt.durationMs, {
-      parentContext: activeInternalOrTrustedContext(evt, metadata),
+      parentContext:
+        takeDeferredExecParentContext(evt, metadata) ??
+        activeInternalOrTrustedContext(evt, metadata),
       endTimeMs: evt.ts,
     });
     if (evt.outcome === "failed") {

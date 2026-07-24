@@ -1,7 +1,7 @@
 import path from "node:path";
 import { normalizeStringEntries } from "@openclaw/normalization-core/string-normalization";
 import { truncateUtf16Safe } from "@openclaw/normalization-core/utf16-slice";
-import { emitTrustedDiagnosticEvent } from "../infra/diagnostic-events.js";
+import { emitInternalDiagnosticEvent } from "../infra/diagnostic-events.js";
 import {
   type EventSessionRoutingPolicy,
   resolveEventSessionKeyForPolicy,
@@ -174,9 +174,9 @@ function emitExecProcessCompleted(params: {
   target: "host" | "sandbox";
 }): void {
   const exitSignal = normalizeExecExitSignal(params.outcome.exitSignal);
-  // This bounded payload is core-owned; trusted provenance lets exporters
-  // attach the completed process to the active tool trace instead of a new root.
-  emitTrustedDiagnosticEvent({
+  // Internal provenance lets exporters trust the OpenClaw-owned trace scope
+  // without hiding this established event from public diagnostic subscribers.
+  emitInternalDiagnosticEvent({
     type: "exec.process.completed",
     target: params.target,
     mode: params.mode,

@@ -31,6 +31,7 @@ import {
 import {
   createChildDiagnosticTraceContext,
   freezeDiagnosticTraceContext,
+  runWithDiagnosticTraceContext,
   type DiagnosticTraceContext,
 } from "../infra/diagnostic-trace-context.js";
 import { isEmbeddedMode } from "../infra/embedded-mode.js";
@@ -1972,7 +1973,13 @@ export function wrapToolWithBeforeToolCallHook(
       }
       const startedAt = Date.now();
       try {
-        const result = await execute(toolCallId, executeParams, signal, onUpdate);
+        // Bind tool-owned async work to the same child trace declared by its
+        // lifecycle events; otherwise late diagnostics fall back to the run.
+        const result = await (trace
+          ? runWithDiagnosticTraceContext(trace, () =>
+              execute(toolCallId, executeParams, signal, onUpdate),
+            )
+          : execute(toolCallId, executeParams, signal, onUpdate));
         const durationMs = Date.now() - startedAt;
         const terminalPresentation = resolveToolTerminalPresentation({
           tool,

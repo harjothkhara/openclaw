@@ -5,6 +5,7 @@
  */
 import { afterEach, beforeAll, beforeEach, expect, test, vi } from "vitest";
 import {
+  onDiagnosticEvent,
   onInternalDiagnosticEvent,
   resetDiagnosticEventsForTest,
   type DiagnosticExecProcessCompletedEvent,
@@ -12,14 +13,16 @@ import {
 } from "../infra/diagnostic-events.js";
 import {
   createDiagnosticTraceContext,
-  runWithDiagnosticTraceContext,
+  type DiagnosticTraceContext,
 } from "../infra/diagnostic-trace-context.js";
 import type { ManagedRun } from "../process/supervisor/index.js";
 import type { SpawnInput } from "../process/supervisor/types.js";
+import type { AnyAgentTool } from "./tools/common.js";
 
 let listRunningSessions: typeof import("./bash-process-registry.js").listRunningSessions;
 let resetProcessRegistryForTests: typeof import("./bash-process-registry.test-support.js").resetProcessRegistryForTests;
 let runExecProcess: typeof import("./bash-tools.exec-runtime.js").runExecProcess;
+let wrapToolWithBeforeToolCallHook: typeof import("./agent-tools.before-tool-call.js").wrapToolWithBeforeToolCallHook;
 
 const { supervisorSpawnMock } = vi.hoisted(() => ({
   supervisorSpawnMock: vi.fn(),
@@ -60,6 +63,7 @@ function createSuccessfulRun(input: SpawnInput): ManagedRun {
 }
 
 beforeAll(async () => {
+  ({ wrapToolWithBeforeToolCallHook } = await import("./agent-tools.before-tool-call.js"));
   ({ listRunningSessions } = await import("./bash-process-registry.js"));
   ({ resetProcessRegistryForTests } = await import("./bash-process-registry.test-support.js"));
   ({ runExecProcess } = await import("./bash-tools.exec-runtime.js"));
@@ -134,17 +138,27 @@ test("exec emits bounded process diagnostics without command text", async () => 
     createSuccessfulRun(input),
   );
   let capturedEvent: DiagnosticExecProcessCompletedEvent | undefined;
+  let publicEvent: DiagnosticExecProcessCompletedEvent | undefined;
+  let toolTrace: DiagnosticTraceContext | undefined;
   let capturedMetadata: DiagnosticEventMetadata | undefined;
-  const unsubscribe = onInternalDiagnosticEvent((item, metadata) => {
+  const unsubscribeInternal = onInternalDiagnosticEvent((item, metadata) => {
+    if (item.type === "tool.execution.started" && item.toolName === "exec") {
+      toolTrace = item.trace;
+    }
     if (item.type === "exec.process.completed") {
       capturedEvent = item;
       capturedMetadata = metadata;
     }
   });
+  const unsubscribePublic = onDiagnosticEvent((item) => {
+    if (item.type === "exec.process.completed") {
+      publicEvent = item;
+    }
+  });
   try {
     const command = "printf super-secret-value";
-    const trace = createDiagnosticTraceContext();
-    await runWithDiagnosticTraceContext(trace, async () => {
+    const parentTrace = createDiagnosticTraceContext();
+    const execute = vi.fn(async () => {
       const handle = await runExecProcess({
         command,
         workdir: process.cwd(),
@@ -158,7 +172,21 @@ test("exec emits bounded process diagnostics without command text", async () => 
         timeoutSec: 5,
       });
       await handle.promise;
+      return { content: [{ type: "text" as const, text: "ok" }] };
     });
+    const tool = wrapToolWithBeforeToolCallHook(
+      { name: "exec", execute } as unknown as AnyAgentTool,
+      {
+        runId: "run-1",
+        sessionKey: "session-1",
+        trace: parentTrace,
+        loopDetection: { enabled: false },
+      },
+    );
+    if (!tool.execute) {
+      throw new Error("Expected wrapped exec tool");
+    }
+    await tool.execute("tool-call-1", { command }, undefined, undefined);
     await flushDiagnosticEvents();
 
     if (!capturedEvent) {
@@ -166,8 +194,10 @@ test("exec emits bounded process diagnostics without command text", async () => 
     }
     const event = capturedEvent;
     expect(event.type).toBe("exec.process.completed");
-    expect(capturedMetadata?.trusted).toBe(true);
-    expect(event.trace).toEqual(trace);
+    expect(capturedMetadata).toMatchObject({ internal: true, trusted: false });
+    expect(publicEvent).toEqual(event);
+    expect(toolTrace?.parentSpanId).toBe(parentTrace.spanId);
+    expect(event.trace).toEqual(toolTrace);
     expect(event.target).toBe("host");
     expect(event.mode).toBe("child");
     expect(event.outcome).toBe("completed");
@@ -180,6 +210,7 @@ test("exec emits bounded process diagnostics without command text", async () => 
     expect(serialized).not.toContain("super-secret-value");
     expect(serialized).not.toContain(process.cwd());
   } finally {
-    unsubscribe();
+    unsubscribePublic();
+    unsubscribeInternal();
   }
 });
