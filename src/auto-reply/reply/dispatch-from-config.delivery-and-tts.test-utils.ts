@@ -832,6 +832,42 @@ describe("dispatchReplyFromConfig", () => {
     expect(skippedEvent?.spanId).toBe(inboundTrace.spanId);
   });
 
+  it("creates one trace scope for direct reply dispatch callers", async () => {
+    setNoAbort();
+    const cfg = { diagnostics: { enabled: true } } as OpenClawConfig;
+    const ctx = buildTestCtx({
+      Provider: "test",
+      Surface: "test",
+      To: "test:peer",
+      MessageSid: "msg-direct-trace",
+      SessionKey: "agent:main:test:peer",
+      CommandBody: "hello",
+      RawBody: "hello",
+      Body: "hello",
+    });
+    let resolverTrace = getActiveDiagnosticTraceContext();
+    let processedTrace = getActiveDiagnosticTraceContext();
+    const replyResolver = vi.fn(async () => {
+      resolverTrace = getActiveDiagnosticTraceContext();
+      return { text: "hi" } satisfies ReplyPayload;
+    });
+    diagnosticMocks.logMessageProcessed.mockImplementation(() => {
+      processedTrace = getActiveDiagnosticTraceContext();
+    });
+
+    await dispatchReplyFromConfig({
+      ctx,
+      cfg,
+      dispatcher: createDispatcher(),
+      replyResolver,
+    });
+
+    expect(replyResolver).toHaveBeenCalledOnce();
+    expect(resolverTrace?.traceId).toBeTruthy();
+    expect(processedTrace?.traceId).toBe(resolverTrace?.traceId);
+    expect(processedTrace?.spanId).toBe(resolverTrace?.spanId);
+  });
+
   it("releases inbound dedupe when dispatch fails before completion", async () => {
     setNoAbort();
     const cfg = { diagnostics: { enabled: true } } as OpenClawConfig;

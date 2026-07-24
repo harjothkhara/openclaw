@@ -5,6 +5,12 @@ import {
   onInternalDiagnosticEvent,
   resetDiagnosticEventsForTest,
 } from "../../infra/diagnostic-events.js";
+import {
+  createChildDiagnosticTraceContext,
+  createDiagnosticTraceContext,
+  freezeDiagnosticTraceContext,
+  getActiveDiagnosticTraceContext,
+} from "../../infra/diagnostic-trace-context.js";
 import { resetDiagnosticStateForTest } from "../../logging/diagnostic.js";
 
 vi.mock("../../agents/auth-profiles/source-check.js", () => ({
@@ -16,9 +22,11 @@ import {
   loadRunCronIsolatedAgentTurn,
   makeCronSession,
   makeCronSessionEntry,
+  mockRunCronFallbackPassthrough,
   resetRunCronIsolatedAgentTurnHarness,
   resolveCronSessionMock,
   restoreFastTestEnv,
+  runEmbeddedAgentMock,
   runWithModelFallbackMock,
 } from "./run.test-harness.js";
 
@@ -109,6 +117,41 @@ describe("runCronIsolatedAgentTurn diagnostic events", () => {
     expect(orderedTypes[0]).toBe("message.queued");
     expect(orderedTypes[orderedTypes.length - 1]).toBe("message.processed");
     expect(orderedTypes).toContain("session.state");
+  });
+
+  it("keeps the isolated cron message and harness diagnostics in one trace", async () => {
+    const events: Array<{
+      type: string;
+      trace?: { traceId: string; spanId?: string; parentSpanId?: string };
+    }> = [];
+    let harnessTrace: ReturnType<typeof createDiagnosticTraceContext> | undefined;
+    const unsubscribe = onInternalDiagnosticEvent((event) => {
+      if (event.type === "message.processed") {
+        events.push(event);
+      }
+    });
+    mockRunCronFallbackPassthrough();
+    runEmbeddedAgentMock.mockImplementationOnce(async () => {
+      const messageTrace = getActiveDiagnosticTraceContext();
+      harnessTrace = messageTrace
+        ? freezeDiagnosticTraceContext(createChildDiagnosticTraceContext(messageTrace))
+        : createDiagnosticTraceContext();
+      return {
+        payloads: [{ text: "test output" }],
+        meta: { agentMeta: {} },
+      };
+    });
+
+    try {
+      await runCronIsolatedAgentTurn(makeParams());
+    } finally {
+      unsubscribe();
+    }
+
+    const message = events.find((event) => event.type === "message.processed");
+    expect(message?.trace?.traceId).toBeTruthy();
+    expect(harnessTrace?.traceId).toBe(message?.trace?.traceId);
+    expect(harnessTrace?.parentSpanId).toBe(message?.trace?.spanId);
   });
 
   it("emits no lifecycle events when diagnostics.enabled is false", async () => {

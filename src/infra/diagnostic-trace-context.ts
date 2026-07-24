@@ -242,3 +242,11 @@ export function runWithDiagnosticTraceContext<T>(
 ): T {
   return getDiagnosticTraceScopeState().storage.run(freezeDiagnosticTraceContext(trace), callback);
 }
+
+/** Reuses an owning trace scope, or creates one for a top-level execution boundary. */
+export function runWithDiagnosticTraceContextIfAbsent<T>(callback: () => T): T {
+  if (getActiveDiagnosticTraceContext()) {
+    return callback();
+  }
+  return runWithDiagnosticTraceContext(createDiagnosticTraceContext(), callback);
+}

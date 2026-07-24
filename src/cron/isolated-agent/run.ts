@@ -32,6 +32,7 @@ import { emitTrustedDiagnosticEvent, isDiagnosticsEnabled } from "../../infra/di
 import {
   createChildDiagnosticTraceContext,
   freezeDiagnosticTraceContext,
+  runWithDiagnosticTraceContextIfAbsent,
 } from "../../infra/diagnostic-trace-context.js";
 import { isFastTestRuntimeEnv } from "../../infra/env.js";
 import {
@@ -1690,8 +1691,7 @@ async function disposeCronRunContext(params: {
   (params.cronSession as { store?: unknown }).store = undefined;
 }
 
-/** Runs one isolated cron agent turn, including setup, execution, delivery, and persistence. */
-export async function runCronIsolatedAgentTurn(params: {
+type RunCronIsolatedAgentTurnParams = {
   cfg: OpenClawConfig;
   deps: CliDeps;
   job: CronJob;
@@ -1704,7 +1704,18 @@ export async function runCronIsolatedAgentTurn(params: {
   sessionKey: string;
   agentId?: string;
   lane?: string;
-}): Promise<RunCronAgentTurnResult> {
+};
+
+/** Runs one isolated cron agent turn, including setup, execution, delivery, and persistence. */
+export async function runCronIsolatedAgentTurn(
+  params: RunCronIsolatedAgentTurnParams,
+): Promise<RunCronAgentTurnResult> {
+  return await runWithDiagnosticTraceContextIfAbsent(() => runCronIsolatedAgentTurnInTrace(params));
+}
+
+async function runCronIsolatedAgentTurnInTrace(
+  params: RunCronIsolatedAgentTurnParams,
+): Promise<RunCronAgentTurnResult> {
   const admittedLifecycleGeneration = getAgentEventLifecycleGeneration();
   const upstreamAbortSignal = params.abortSignal ?? params.signal;
   const lifecycleAbortController = new AbortController();
