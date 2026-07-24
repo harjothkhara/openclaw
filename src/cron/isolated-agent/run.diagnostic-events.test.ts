@@ -1,6 +1,7 @@
 // Run diagnostic event tests cover emitted diagnostics from isolated cron runs.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  emitTrustedDiagnosticEvent,
   onDiagnosticEvent,
   onInternalDiagnosticEvent,
   resetDiagnosticEventsForTest,
@@ -82,6 +83,8 @@ describe("runCronIsolatedAgentTurn diagnostic events", () => {
       const e = evt as EventRecord;
       if (
         e.type === "message.queued" ||
+        e.type === "message.dispatch.started" ||
+        e.type === "message.dispatch.completed" ||
         e.type === "session.state" ||
         e.type === "message.processed"
       ) {
@@ -99,6 +102,10 @@ describe("runCronIsolatedAgentTurn diagnostic events", () => {
     const ofType = (type: string) => events.filter((e) => e.type === type);
     expect(ofType("message.queued")).toHaveLength(1);
     expect(ofType("message.queued")[0]?.source).toBe("cron-isolated");
+    expect(ofType("message.dispatch.started")).toHaveLength(1);
+    expect(ofType("message.dispatch.completed")).toMatchObject([
+      { source: "cron-isolated", outcome: "completed" },
+    ]);
 
     const stateEvents = ofType("session.state");
     expect(stateEvents.map((e) => e.state)).toEqual(["processing", "idle"]);
@@ -114,9 +121,14 @@ describe("runCronIsolatedAgentTurn diagnostic events", () => {
     }
 
     const orderedTypes = events.map((e) => e.type);
-    expect(orderedTypes[0]).toBe("message.queued");
-    expect(orderedTypes[orderedTypes.length - 1]).toBe("message.processed");
-    expect(orderedTypes).toContain("session.state");
+    expect(orderedTypes).toEqual([
+      "message.queued",
+      "session.state",
+      "message.dispatch.started",
+      "message.dispatch.completed",
+      "session.state",
+      "message.processed",
+    ]);
   });
 
   it("keeps the isolated cron message and harness diagnostics in one trace", async () => {
@@ -126,7 +138,11 @@ describe("runCronIsolatedAgentTurn diagnostic events", () => {
     }> = [];
     let harnessTrace: ReturnType<typeof createDiagnosticTraceContext> | undefined;
     const unsubscribe = onInternalDiagnosticEvent((event) => {
-      if (event.type === "message.processed") {
+      if (
+        event.type === "message.dispatch.started" ||
+        event.type === "harness.run.started" ||
+        event.type === "message.processed"
+      ) {
         events.push(event);
       }
     });
@@ -136,6 +152,15 @@ describe("runCronIsolatedAgentTurn diagnostic events", () => {
       harnessTrace = messageTrace
         ? freezeDiagnosticTraceContext(createChildDiagnosticTraceContext(messageTrace))
         : createDiagnosticTraceContext();
+      emitTrustedDiagnosticEvent({
+        type: "harness.run.started",
+        runId: "cron-run-1",
+        harnessId: "openclaw",
+        provider: "openai",
+        model: "gpt-5.5",
+        channel: "cron",
+        trace: harnessTrace,
+      });
       return {
         payloads: [{ text: "test output" }],
         meta: { agentMeta: {} },
@@ -148,7 +173,13 @@ describe("runCronIsolatedAgentTurn diagnostic events", () => {
       unsubscribe();
     }
 
+    const dispatchStartedIndex = events.findIndex(
+      (event) => event.type === "message.dispatch.started",
+    );
+    const harnessStartedIndex = events.findIndex((event) => event.type === "harness.run.started");
     const message = events.find((event) => event.type === "message.processed");
+    expect(dispatchStartedIndex).toBeGreaterThanOrEqual(0);
+    expect(harnessStartedIndex).toBeGreaterThan(dispatchStartedIndex);
     expect(message?.trace?.traceId).toBeTruthy();
     expect(harnessTrace?.traceId).toBe(message?.trace?.traceId);
     expect(harnessTrace?.parentSpanId).toBe(message?.trace?.spanId);

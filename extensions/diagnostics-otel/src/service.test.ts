@@ -3373,6 +3373,43 @@ describe("diagnostics-otel service", () => {
     expect(harnessSpanContext.traceId).toBe(TRACE_ID);
   });
 
+  test("parents an isolated cron harness under its message span", async () => {
+    await startOtelService({ traces: true, metrics: true });
+
+    const messageTrace = createDiagnosticTraceContext(createTestTrace(CHILD_SPAN_ID));
+
+    runWithDiagnosticTraceContext(messageTrace, () => {
+      logMessageDispatchStarted({
+        channel: "cron",
+        sessionKey: "cron:diag-events",
+        source: "cron-isolated",
+      });
+      emitTrustedDiagnosticEvent({
+        type: "harness.run.started",
+        runId: "cron-run-1",
+        harnessId: "openclaw",
+        provider: "openai",
+        model: "gpt-5.5",
+        channel: "cron",
+        trace: createTestTrace(GRANDCHILD_SPAN_ID, CHILD_SPAN_ID),
+      });
+      logMessageProcessed({
+        channel: "cron",
+        sessionKey: "cron:diag-events",
+        durationMs: 120,
+        outcome: "completed",
+      });
+    });
+    await flushDiagnosticEvents();
+
+    const messageSpan = spanByName("openclaw.message.processed");
+    const harnessSpan = spanByName("openclaw.harness.run");
+    const harnessParent = startedSpanParentContexts("openclaw.harness.run")[0];
+
+    expect(harnessParent?.spanId).toBe(messageSpan.spanContext().spanId);
+    expect(harnessSpan.spanContext().traceId).toBe(messageSpan.spanContext().traceId);
+  });
+
   test("does not force a remote parent for root message lifecycle helpers", async () => {
     await startOtelService({ traces: true, metrics: true });
 

@@ -41,6 +41,10 @@ import {
   type SourceDeliveryPlan,
   type SourceDeliveryVisibleDelivery,
 } from "../../infra/outbound/source-delivery-plan.js";
+import {
+  logMessageDispatchCompleted,
+  logMessageDispatchStarted,
+} from "../../logging/diagnostic.js";
 import { createDiagnosticMessageLifecycle } from "../../logging/message-lifecycle.js";
 import { isCommandLaneTaskTimeoutError } from "../../process/command-queue.js";
 import { CommandLane } from "../../process/lanes.js";
@@ -1771,10 +1775,11 @@ async function runCronIsolatedAgentTurnInTrace(
   };
 
   const turnStartedAtMs = Date.now();
+  const diagnosticsEnabled = isDiagnosticsEnabled(params.cfg);
   const messageLifecycle = (() => {
     try {
       const lifecycle = createDiagnosticMessageLifecycle({
-        enabled: isDiagnosticsEnabled(params.cfg),
+        enabled: diagnosticsEnabled,
         sessionId: prepared.context.runSessionId,
         sessionKey: prepared.context.runSessionKey,
         channel: "cron",
@@ -1783,6 +1788,16 @@ async function runCronIsolatedAgentTurnInTrace(
         trackSessionState: true,
       });
       lifecycle.markProcessing();
+      if (diagnosticsEnabled) {
+        // The exporter opens the message span from this event, before the harness
+        // starts, so later harness/tool events can resolve their active parent.
+        logMessageDispatchStarted({
+          sessionId: prepared.context.runSessionId,
+          sessionKey: prepared.context.runSessionKey,
+          channel: "cron",
+          source: "cron-isolated",
+        });
+      }
       return lifecycle;
     } catch (error) {
       prepared.context.sessionWorkAdmission.release();
@@ -1924,6 +1939,16 @@ async function runCronIsolatedAgentTurnInTrace(
       sessionId: prepared.context.currentRunSessionId(),
       sessionKey: prepared.context.runSessionKey,
     };
+    if (diagnosticsEnabled) {
+      logMessageDispatchCompleted({
+        ...finalSessionRef,
+        channel: "cron",
+        source: "cron-isolated",
+        durationMs: Date.now() - turnStartedAtMs,
+        outcome,
+        error: outcomeError,
+      });
+    }
     messageLifecycle.markIdle(undefined, finalSessionRef);
     messageLifecycle.markProcessed(outcome, {
       ...finalSessionRef,
