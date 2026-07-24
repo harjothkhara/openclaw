@@ -1716,12 +1716,13 @@ type RunCronIsolatedAgentTurnParams = {
 export async function runCronIsolatedAgentTurn(
   params: RunCronIsolatedAgentTurnParams,
 ): Promise<RunCronAgentTurnResult> {
-  if (getActiveDiagnosticTraceContext()) {
-    return await runCronIsolatedAgentTurnInTrace(params);
-  }
-  return await runWithDiagnosticTraceContext(createDiagnosticTraceContext(), () =>
-    runCronIsolatedAgentTurnInTrace(params),
-  );
+  const activeTrace = getActiveDiagnosticTraceContext();
+  // Every cron turn owns a distinct message span identity. Reusing an ambient
+  // scheduler trace would make concurrent jobs collide in lifecycle recorders.
+  const trace = activeTrace
+    ? createChildDiagnosticTraceContext(activeTrace)
+    : createDiagnosticTraceContext();
+  return await runWithDiagnosticTraceContext(trace, () => runCronIsolatedAgentTurnInTrace(params));
 }
 
 async function runCronIsolatedAgentTurnInTrace(

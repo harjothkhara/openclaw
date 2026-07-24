@@ -11,6 +11,7 @@ import {
   createDiagnosticTraceContext,
   freezeDiagnosticTraceContext,
   getActiveDiagnosticTraceContext,
+  runWithDiagnosticTraceContext,
 } from "../../infra/diagnostic-trace-context.js";
 import { resetDiagnosticStateForTest } from "../../logging/diagnostic.js";
 
@@ -183,6 +184,46 @@ describe("runCronIsolatedAgentTurn diagnostic events", () => {
     expect(message?.trace?.traceId).toBeTruthy();
     expect(harnessTrace?.traceId).toBe(message?.trace?.traceId);
     expect(harnessTrace?.parentSpanId).toBe(message?.trace?.spanId);
+  });
+
+  it("creates a distinct message trace identity for each turn under one scheduler trace", async () => {
+    const messageTraces: Array<{
+      traceId: string;
+      spanId?: string;
+      parentSpanId?: string;
+    }> = [];
+    const schedulerTrace = createDiagnosticTraceContext();
+    const unsubscribe = onInternalDiagnosticEvent((event) => {
+      if (event.type === "message.dispatch.started" && event.trace) {
+        messageTraces.push(event.trace);
+      }
+    });
+    mockRunCronFallbackPassthrough();
+    resolveCronSessionMock.mockImplementation(() => makeCronSession());
+    const firstParams = makeParams();
+    const secondParams = makeParams();
+    secondParams.job.id = "cron-diag-events-2";
+    secondParams.sessionKey = "cron:diag-events-2";
+
+    try {
+      await runWithDiagnosticTraceContext(schedulerTrace, async () => {
+        await runCronIsolatedAgentTurn(firstParams);
+        await runCronIsolatedAgentTurn(secondParams);
+      });
+    } finally {
+      unsubscribe();
+    }
+
+    expect(messageTraces).toHaveLength(2);
+    expect(messageTraces.map((trace) => trace.traceId)).toEqual([
+      schedulerTrace.traceId,
+      schedulerTrace.traceId,
+    ]);
+    expect(messageTraces.map((trace) => trace.parentSpanId)).toEqual([
+      schedulerTrace.spanId,
+      schedulerTrace.spanId,
+    ]);
+    expect(messageTraces[0]?.spanId).not.toBe(messageTraces[1]?.spanId);
   });
 
   it("emits no lifecycle events when diagnostics.enabled is false", async () => {
