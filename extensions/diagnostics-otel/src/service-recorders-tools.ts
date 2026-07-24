@@ -75,6 +75,15 @@ export function createToolAndSystemRecorders(runtime: DiagnosticsRecorderRuntime
     deferredExecParentContexts.delete(key);
     return parentContext;
   };
+  const clearDeferredExecParentContext = (
+    evt: DiagnosticEventPayload,
+    metadata: DiagnosticEventMetadata,
+  ) => {
+    const traceContext = internalOrTrustedTraceContext(evt, metadata);
+    if (traceContext?.spanId) {
+      deferredExecParentContexts.delete(traceKey(traceContext.traceId, traceContext.spanId));
+    }
+  };
 
   const toolExecutionBaseAttrs = (
     evt: Extract<
@@ -175,6 +184,8 @@ export function createToolAndSystemRecorders(runtime: DiagnosticsRecorderRuntime
         endTimeMs: evt.ts,
       });
     setSpanAttrs(span, spanAttrs);
+    // A background exec process completes after this tool event. Its retained
+    // parent is consumed only by exec.process.completed, or cleared on failure.
     span.end(evt.ts);
   };
 
@@ -192,7 +203,7 @@ export function createToolAndSystemRecorders(runtime: DiagnosticsRecorderRuntime
       return;
     }
     if (evt.toolName === "exec") {
-      takeDeferredExecParentContext(evt, metadata);
+      clearDeferredExecParentContext(evt, metadata);
     }
     const spanAttrs: Record<string, string | number | boolean> = { ...attrs };
     addRunAttrs(spanAttrs, evt);
@@ -227,7 +238,7 @@ export function createToolAndSystemRecorders(runtime: DiagnosticsRecorderRuntime
       return;
     }
     if (evt.toolName === "exec") {
-      takeDeferredExecParentContext(evt, metadata);
+      clearDeferredExecParentContext(evt, metadata);
     }
     const spanAttrs: Record<string, string | number | boolean> = {
       ...toolExecutionBaseAttrs(evt),
