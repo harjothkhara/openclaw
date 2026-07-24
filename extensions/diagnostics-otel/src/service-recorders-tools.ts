@@ -28,6 +28,7 @@ export function createToolAndSystemRecorders(runtime: DiagnosticsRecorderRuntime
     telemetryExporterCounter,
     spanWithDuration,
     activeTrustedParentContext,
+    activeInternalOrTrustedContext,
     trackTrustedSpan,
     takeTrackedTrustedSpan,
     setSpanAttrs,
@@ -208,6 +209,7 @@ export function createToolAndSystemRecorders(runtime: DiagnosticsRecorderRuntime
 
   const recordExecProcessCompleted = (
     evt: Extract<DiagnosticEventPayload, { type: "exec.process.completed" }>,
+    metadata: DiagnosticEventMetadata,
   ) => {
     const attrs: Record<string, string | number> = {
       "openclaw.exec.target": evt.target,
@@ -236,7 +238,10 @@ export function createToolAndSystemRecorders(runtime: DiagnosticsRecorderRuntime
       spanAttrs["openclaw.exec.timed_out"] = evt.timedOut;
     }
 
+    // Process completion may arrive after ambient OTel context is gone, so
+    // resolve the producer's diagnostic scope to keep exec under its tool span.
     const span = spanWithDuration("openclaw.exec", spanAttrs, evt.durationMs, {
+      parentContext: activeInternalOrTrustedContext(evt, metadata),
       endTimeMs: evt.ts,
     });
     if (evt.outcome === "failed") {

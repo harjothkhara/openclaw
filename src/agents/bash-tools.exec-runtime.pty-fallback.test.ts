@@ -8,8 +8,12 @@ import {
   onInternalDiagnosticEvent,
   resetDiagnosticEventsForTest,
   type DiagnosticExecProcessCompletedEvent,
-  type DiagnosticEventPayload,
+  type DiagnosticEventMetadata,
 } from "../infra/diagnostic-events.js";
+import {
+  createDiagnosticTraceContext,
+  runWithDiagnosticTraceContext,
+} from "../infra/diagnostic-trace-context.js";
 import type { ManagedRun } from "../process/supervisor/index.js";
 import type { SpawnInput } from "../process/supervisor/types.js";
 
@@ -129,35 +133,41 @@ test("exec emits bounded process diagnostics without command text", async () => 
   supervisorSpawnMock.mockImplementationOnce(async (input: SpawnInput) =>
     createSuccessfulRun(input),
   );
-  const events: DiagnosticEventPayload[] = [];
-  const unsubscribe = onInternalDiagnosticEvent((event) => {
-    events.push(event);
+  let capturedEvent: DiagnosticExecProcessCompletedEvent | undefined;
+  let capturedMetadata: DiagnosticEventMetadata | undefined;
+  const unsubscribe = onInternalDiagnosticEvent((item, metadata) => {
+    if (item.type === "exec.process.completed") {
+      capturedEvent = item;
+      capturedMetadata = metadata;
+    }
   });
   try {
     const command = "printf super-secret-value";
-    const handle = await runExecProcess({
-      command,
-      workdir: process.cwd(),
-      env: {},
-      usePty: false,
-      warnings: [],
-      maxOutput: 20_000,
-      pendingMaxOutput: 20_000,
-      notifyOnExit: false,
-      sessionKey: "session-1",
-      timeoutSec: 5,
+    const trace = createDiagnosticTraceContext();
+    await runWithDiagnosticTraceContext(trace, async () => {
+      const handle = await runExecProcess({
+        command,
+        workdir: process.cwd(),
+        env: {},
+        usePty: false,
+        warnings: [],
+        maxOutput: 20_000,
+        pendingMaxOutput: 20_000,
+        notifyOnExit: false,
+        sessionKey: "session-1",
+        timeoutSec: 5,
+      });
+      await handle.promise;
     });
-
-    await handle.promise;
     await flushDiagnosticEvents();
 
-    const event = events.find(
-      (item): item is DiagnosticExecProcessCompletedEvent => item.type === "exec.process.completed",
-    );
-    if (!event) {
+    if (!capturedEvent) {
       throw new Error("Expected exec process completed event");
     }
+    const event = capturedEvent;
     expect(event.type).toBe("exec.process.completed");
+    expect(capturedMetadata?.trusted).toBe(true);
+    expect(event.trace).toEqual(trace);
     expect(event.target).toBe("host");
     expect(event.mode).toBe("child");
     expect(event.outcome).toBe("completed");

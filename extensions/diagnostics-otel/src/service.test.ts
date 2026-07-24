@@ -3881,17 +3881,27 @@ describe("diagnostics-otel service", () => {
   test("exports exec process spans without command text", async () => {
     await startOtelService({ traces: true, metrics: true });
 
-    await emitAndFlush({
-      type: "exec.process.completed",
-      target: "host",
-      mode: "child",
-      outcome: "failed",
-      durationMs: 30,
-      commandLength: 42,
-      exitCode: 1,
-      timedOut: false,
-      failureKind: "runtime-error",
+    const toolTrace = createDiagnosticTraceContext(createTestTrace(TOOL_SPAN_ID, CHILD_SPAN_ID));
+    emitTrustedDiagnosticEvent({
+      type: "tool.execution.started",
+      runId: "run-1",
+      toolName: "exec",
+      trace: toolTrace,
     });
+    runWithDiagnosticTraceContext(toolTrace, () => {
+      emitTrustedDiagnosticEvent({
+        type: "exec.process.completed",
+        target: "host",
+        mode: "child",
+        outcome: "failed",
+        durationMs: 30,
+        commandLength: 42,
+        exitCode: 1,
+        timedOut: false,
+        failureKind: "runtime-error",
+      });
+    });
+    await flushDiagnosticEvents();
 
     const execDuration = lastHistogramRecord("openclaw.exec.duration_ms");
     expect(execDuration?.[0]).toBe(30);
@@ -3913,6 +3923,9 @@ describe("diagnostics-otel service", () => {
     expect(Object.hasOwn(execOptions?.attributes ?? {}, "openclaw.exec.workdir")).toBe(false);
     expect(Object.hasOwn(execOptions?.attributes ?? {}, "openclaw.sessionKey")).toBe(false);
     expect(execOptions?.startTime).toBeTypeOf("number");
+    expect(startedSpanParentContexts("openclaw.exec")[0]?.spanId).toBe(
+      spanByName("openclaw.tool.execution").spanContext().spanId,
+    );
 
     const execSpan = spanByName("openclaw.exec");
     expect(execSpan?.setStatus).toHaveBeenCalledWith({
