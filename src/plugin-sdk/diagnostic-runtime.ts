@@ -32,5 +32,4 @@ export {
   isValidDiagnosticTraceFlags,
   isValidDiagnosticTraceId,
   parseDiagnosticTraceparent,
-  runWithDiagnosticTraceContext,
 } from "../infra/diagnostic-trace-context.js";

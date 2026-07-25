@@ -1,8 +1,8 @@
+import { runWithDiagnosticTraceContext } from "openclaw/plugin-sdk/agent-harness-tool-runtime";
 import {
   createChildDiagnosticTraceContext,
   freezeDiagnosticTraceContext,
   onInternalDiagnosticEvent,
-  runWithDiagnosticTraceContext,
 } from "openclaw/plugin-sdk/diagnostic-runtime";
 import { isCodexAppServerApprovalRequest } from "./client.js";
 import { shouldAutoApproveCodexAppServerApprovals } from "./config.js";
