@@ -490,14 +490,17 @@ export type DiagnosticToolExecutionStartedEvent = DiagnosticToolExecutionBaseEve
   type: "tool.execution.started";
 };
 
-export type DiagnosticToolExecutionCompletedEvent = DiagnosticToolExecutionBaseEvent & {
-  type: "tool.execution.completed";
-  durationMs: number;
+type DiagnosticToolExecutionTerminalEvent = DiagnosticToolExecutionBaseEvent & {
   /** A tool-owned process will emit its terminal diagnostic after this event. */
   deferredProcessCompletion?: boolean;
 };
 
-export type DiagnosticToolExecutionErrorEvent = DiagnosticToolExecutionBaseEvent & {
+export type DiagnosticToolExecutionCompletedEvent = DiagnosticToolExecutionTerminalEvent & {
+  type: "tool.execution.completed";
+  durationMs: number;
+};
+
+export type DiagnosticToolExecutionErrorEvent = DiagnosticToolExecutionTerminalEvent & {
   type: "tool.execution.error";
   durationMs: number;
   errorCategory: string;
@@ -505,7 +508,7 @@ export type DiagnosticToolExecutionErrorEvent = DiagnosticToolExecutionBaseEvent
   terminalReason?: DiagnosticToolTerminalReason;
 };
 
-export type DiagnosticToolExecutionBlockedEvent = DiagnosticToolExecutionBaseEvent & {
+export type DiagnosticToolExecutionBlockedEvent = DiagnosticToolExecutionTerminalEvent & {
   type: "tool.execution.blocked";
   deniedReason: string;
   reason: string;

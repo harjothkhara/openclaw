@@ -34,6 +34,7 @@ export function emitDynamicToolStartedDiagnostic(params: DynamicToolDiagnosticCo
 /** Emits an error event for one Codex dynamic tool call. */
 export function emitDynamicToolErrorDiagnostic(
   params: DynamicToolDiagnosticContext & {
+    deferredProcessCompletion?: boolean;
     durationMs: number;
     terminalReason?: "failed" | "cancelled" | "timed_out";
   },
@@ -48,6 +49,7 @@ export function emitDynamicToolErrorDiagnostic(
     toolCallId: params.call.callId,
     durationMs: params.durationMs,
     errorCategory: "codex_dynamic_tool_error",
+    deferredProcessCompletion: params.deferredProcessCompletion,
     terminalReason: params.terminalReason ?? "failed",
     trace: params.trace,
   });
@@ -87,6 +89,7 @@ export function emitDynamicToolTerminalDiagnostic(
       toolName: params.call.tool,
       toolCallId: params.call.callId,
       deniedReason: "plugin-before-tool-call",
+      deferredProcessCompletion: params.response.deferredProcessCompletion,
       reason: "Tool call blocked",
       trace: params.trace,
     });
@@ -94,6 +97,7 @@ export function emitDynamicToolTerminalDiagnostic(
   }
   emitDynamicToolErrorDiagnostic({
     ...params,
+    deferredProcessCompletion: params.response.deferredProcessCompletion,
     terminalReason: params.response.diagnosticTerminalReason ?? "failed",
   });
 }

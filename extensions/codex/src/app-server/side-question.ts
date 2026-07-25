@@ -17,6 +17,15 @@ import {
   type NativeHookRelayEvent,
   type NativeHookRelayRegistrationHandle,
 } from "openclaw/plugin-sdk/agent-harness-runtime";
+import {
+  getActiveDiagnosticTraceContext,
+  runWithDiagnosticTraceContext,
+} from "openclaw/plugin-sdk/agent-harness-tool-runtime";
+import {
+  createChildDiagnosticTraceContext,
+  createDiagnosticTraceContext,
+  freezeDiagnosticTraceContext,
+} from "openclaw/plugin-sdk/diagnostic-runtime";
 import { loadExecApprovals } from "openclaw/plugin-sdk/exec-approvals-runtime";
 import { resolveCodexAppServerForModelProvider } from "./app-server-policy.js";
 import { handleCodexAppServerApprovalRequest } from "./approval-bridge.js";
@@ -162,6 +171,13 @@ export async function runCodexAppServerSideQuestion(
     };
   },
 ): Promise<AgentHarnessSideQuestionResult> {
+  // Client request handlers re-enter from transport I/O, outside the caller's
+  // async scope. Capture an existing owning turn now so every tool can bind
+  // back to it; without one, tools must remain roots instead of inventing a parent.
+  const activeSideQuestionTrace = getActiveDiagnosticTraceContext();
+  const sideQuestionTrace = activeSideQuestionTrace
+    ? freezeDiagnosticTraceContext(activeSideQuestionTrace)
+    : undefined;
   const binding = await options.bindingStore.read(
     sessionBindingIdentity({
       sessionId: params.sessionId,
@@ -477,21 +493,27 @@ export async function runCodexAppServerSideQuestion(
           config: params.cfg,
         });
         const toolStartedAt = Date.now();
+        const toolTrace = sideQuestionTrace
+          ? freezeDiagnosticTraceContext(createChildDiagnosticTraceContext(sideQuestionTrace))
+          : createDiagnosticTraceContext();
         const diagnosticContext = {
           call,
           agentId: sessionAgentId,
           runId: sideRunParams.runId,
           sessionId: params.sessionId,
           sessionKey: params.sessionKey,
+          trace: toolTrace,
         };
         emitDynamicToolStartedDiagnostic(diagnosticContext);
-        const toolCall = handleDynamicToolCallWithTimeout({
-          call,
-          toolBridge,
-          signal: runAbortController.signal,
-          timeoutMs,
-          observeToolTerminal: sideRunParams.observeToolTerminal,
-        });
+        const toolCall = runWithDiagnosticTraceContext(toolTrace, () =>
+          handleDynamicToolCallWithTimeout({
+            call,
+            toolBridge,
+            signal: runAbortController.signal,
+            timeoutMs,
+            observeToolTerminal: sideRunParams.observeToolTerminal,
+          }),
+        );
         activeDynamicToolCalls.add(toolCall);
         try {
           const response = await toolCall;

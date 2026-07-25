@@ -4024,6 +4024,60 @@ describe("diagnostics-otel service", () => {
     );
   });
 
+  test.each(["blocked", "error"] as const)(
+    "retains a deferred exec parent after a post-processed %s result",
+    async (terminalType) => {
+      await startOtelService({ traces: true, metrics: true });
+
+      const toolTrace = createDiagnosticTraceContext(createTestTrace(TOOL_SPAN_ID, CHILD_SPAN_ID));
+      emitTrustedDiagnosticEvent({
+        type: "tool.execution.started",
+        runId: "run-deferred",
+        toolName: "exec",
+        trace: toolTrace,
+      });
+      if (terminalType === "blocked") {
+        await emitTrustedAndFlush({
+          type: "tool.execution.blocked",
+          runId: "run-deferred",
+          toolName: "exec",
+          deniedReason: "tool_result_blocked",
+          reason: "tool_result_blocked",
+          deferredProcessCompletion: true,
+          trace: toolTrace,
+        });
+      } else {
+        await emitTrustedAndFlush({
+          type: "tool.execution.error",
+          runId: "run-deferred",
+          toolName: "exec",
+          durationMs: 1,
+          errorCategory: "post_processing",
+          deferredProcessCompletion: true,
+          trace: toolTrace,
+        });
+      }
+
+      const toolSpan = spanByName("openclaw.tool.execution");
+      runWithDiagnosticTraceContext(toolTrace, () => {
+        emitInternalDiagnosticEventForTest({
+          type: "exec.process.completed",
+          target: "host",
+          mode: "child",
+          outcome: "failed",
+          durationMs: 1,
+          commandLength: 1,
+          failureKind: "runtime-error",
+        });
+      });
+      await flushDiagnosticEvents();
+
+      expect(startedSpanParentContexts("openclaw.exec")[0]?.spanId).toBe(
+        toolSpan.spanContext().spanId,
+      );
+    },
+  );
+
   test("exports message delivery spans and metrics with low-cardinality attributes", async () => {
     await startOtelService({ traces: true, metrics: true });
 

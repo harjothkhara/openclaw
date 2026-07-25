@@ -788,4 +788,43 @@ describe("runCodexAppServerAttempt dynamic tools", () => {
       }),
     );
   });
+
+  it.each(["blocked", "error"] as const)(
+    "retains deferred process completion on post-processed %s diagnostics",
+    async (diagnosticTerminalType) => {
+      const diagnosticEvents: DiagnosticEventPayload[] = [];
+      const unsubscribeDiagnostics = onInternalDiagnosticEvent((event) =>
+        diagnosticEvents.push(event),
+      );
+      try {
+        emitDynamicToolTerminalDiagnostic({
+          call: {
+            threadId: "thread-1",
+            turnId: "turn-1",
+            callId: `call-exec-${diagnosticTerminalType}`,
+            tool: "exec",
+            arguments: {},
+          },
+          durationMs: 1,
+          response: {
+            contentItems: [{ type: "inputText", text: diagnosticTerminalType }],
+            deferredProcessCompletion: true,
+            diagnosticTerminalType,
+            success: false,
+          },
+        });
+        await flushDiagnosticEvents();
+      } finally {
+        unsubscribeDiagnostics();
+      }
+
+      expect(diagnosticEvents).toContainEqual(
+        expect.objectContaining({
+          type: `tool.execution.${diagnosticTerminalType}`,
+          deferredProcessCompletion: true,
+          toolCallId: `call-exec-${diagnosticTerminalType}`,
+        }),
+      );
+    },
+  );
 });

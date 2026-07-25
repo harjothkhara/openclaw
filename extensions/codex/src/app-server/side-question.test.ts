@@ -4,6 +4,11 @@ import {
   type NativeHookRelayRegistrationHandle,
 } from "openclaw/plugin-sdk/agent-harness-runtime";
 import {
+  getActiveDiagnosticTraceContext,
+  runWithDiagnosticTraceContext,
+} from "openclaw/plugin-sdk/agent-harness-tool-runtime";
+import {
+  createDiagnosticTraceContext,
   onInternalDiagnosticEvent,
   resetDiagnosticEventsForTest,
   type DiagnosticEventPayload,
@@ -2405,9 +2410,19 @@ describe("runCodexAppServerSideQuestion", () => {
     await expect(run).resolves.toEqual({ text: "Finished answer." });
   });
 
-  it("clears side-thread dynamic tool diagnostics at the app-server request boundary", async () => {
+  it.each([
+    { name: "below the caller across app-server requests", withCallerTrace: true },
+    { name: "as roots when no caller trace exists", withCallerTrace: false },
+  ])("scopes side-thread dynamic tools $name", async ({ withCallerTrace }) => {
     const client = createFakeClient();
     const diagnosticEvents: DiagnosticEventPayload[] = [];
+    const executionTraces: Array<ReturnType<typeof getActiveDiagnosticTraceContext>> = [];
+    const sideQuestionTrace = withCallerTrace ? createDiagnosticTraceContext() : undefined;
+    const transportTrace = createDiagnosticTraceContext();
+    toolExecuteMock.mockImplementation(async () => {
+      executionTraces.push(getActiveDiagnosticTraceContext());
+      return { content: [{ type: "text" as const, text: "tool output" }] };
+    });
     const unsubscribeDiagnostics = onInternalDiagnosticEvent((event) =>
       diagnosticEvents.push(event),
     );
@@ -2421,16 +2436,20 @@ describe("runCodexAppServerSideQuestion", () => {
       if (method === "turn/start") {
         setTimeout(() => {
           void (async () => {
-            await client.handleRequest({
-              id: 42,
-              method: "item/tool/call",
-              params: {
-                threadId: "side-thread",
-                turnId: "turn-1",
-                callId: "tool-1",
-                tool: "wiki_status",
-                arguments: { topic: "AGENTS.md" },
-              },
+            await runWithDiagnosticTraceContext(transportTrace, async () => {
+              for (const callId of ["tool-1", "tool-2"]) {
+                await client.handleRequest({
+                  id: callId,
+                  method: "item/tool/call",
+                  params: {
+                    threadId: "side-thread",
+                    turnId: "turn-1",
+                    callId,
+                    tool: "wiki_status",
+                    arguments: { topic: "AGENTS.md" },
+                  },
+                });
+              }
             });
             client.emit(agentDelta("side-thread", "turn-1", "Tool answer."));
             client.emit(turnCompleted("side-thread", "turn-1", "Tool answer."));
@@ -2445,11 +2464,17 @@ describe("runCodexAppServerSideQuestion", () => {
     });
     getSharedCodexAppServerClientMock.mockResolvedValue(client);
 
-    await runCodexAppServerSideQuestion(
-      sideParams({
-        opts: { runId: "run-side-diagnostics" },
-      }),
-    );
+    const runSideQuestion = () =>
+      runCodexAppServerSideQuestion(
+        sideParams({
+          opts: { runId: "run-side-diagnostics" },
+        }),
+      );
+    if (sideQuestionTrace) {
+      await runWithDiagnosticTraceContext(sideQuestionTrace, runSideQuestion);
+    } else {
+      await runSideQuestion();
+    }
     await flushDiagnosticEvents();
     unsubscribeDiagnostics();
 
@@ -2478,7 +2503,38 @@ describe("runCodexAppServerSideQuestion", () => {
         toolName: "wiki_status",
         toolCallId: "tool-1",
       },
+      {
+        type: "tool.execution.started",
+        toolName: "wiki_status",
+        toolCallId: "tool-2",
+      },
+      {
+        type: "tool.execution.completed",
+        toolName: "wiki_status",
+        toolCallId: "tool-2",
+      },
     ]);
+    const startedEvents = toolDiagnosticEvents.filter(
+      (event): event is Extract<DiagnosticEventPayload, { type: "tool.execution.started" }> =>
+        event.type === "tool.execution.started",
+    );
+    if (sideQuestionTrace) {
+      expect(startedEvents[0]?.trace?.traceId).toBe(sideQuestionTrace.traceId);
+      expect(startedEvents[0]?.trace?.parentSpanId).toBe(sideQuestionTrace.spanId);
+    } else {
+      expect(startedEvents[0]?.trace?.parentSpanId).toBeUndefined();
+      expect(startedEvents[1]?.trace?.parentSpanId).toBeUndefined();
+      expect(startedEvents[0]?.trace?.traceId).not.toBe(startedEvents[1]?.trace?.traceId);
+    }
+    expect(startedEvents[0]?.trace?.spanId).not.toBe(startedEvents[1]?.trace?.spanId);
+    expect(executionTraces).toEqual(startedEvents.map((event) => event.trace));
+    for (const started of startedEvents) {
+      const terminal = toolDiagnosticEvents.find(
+        (event) =>
+          event.type === "tool.execution.completed" && event.toolCallId === started.toolCallId,
+      );
+      expect(terminal?.trace).toEqual(started.trace);
+    }
     expect(activeDiagnosticToolKeys(diagnosticEvents)).toEqual(new Set());
   });
 

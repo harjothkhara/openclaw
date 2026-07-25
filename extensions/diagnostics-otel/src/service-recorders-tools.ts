@@ -54,6 +54,8 @@ export function createToolAndSystemRecorders(runtime: DiagnosticsRecorderRuntime
     const key = traceKey(traceContext.traceId, traceContext.spanId);
     deferredExecParentContexts.delete(key);
     deferredExecParentContexts.set(key, parentContext);
+    // Background execs may legitimately run indefinitely, so avoid a TTL that
+    // would sever valid traces. The count cap evicts the least-recently retained.
     while (deferredExecParentContexts.size > MAX_RETAINED_TRUSTED_SPAN_CONTEXTS) {
       const oldestKey = deferredExecParentContexts.keys().next().value;
       if (!oldestKey) {
@@ -82,6 +84,19 @@ export function createToolAndSystemRecorders(runtime: DiagnosticsRecorderRuntime
     const traceContext = internalOrTrustedTraceContext(evt, metadata);
     if (traceContext?.spanId) {
       deferredExecParentContexts.delete(traceKey(traceContext.traceId, traceContext.spanId));
+    }
+  };
+  const clearSettledExecParentContext = (
+    evt: Extract<
+      DiagnosticEventPayload,
+      {
+        type: "tool.execution.completed" | "tool.execution.error" | "tool.execution.blocked";
+      }
+    >,
+    metadata: DiagnosticEventMetadata,
+  ) => {
+    if (evt.toolName === "exec" && evt.deferredProcessCompletion !== true) {
+      clearDeferredExecParentContext(evt, metadata);
     }
   };
 
@@ -177,11 +192,9 @@ export function createToolAndSystemRecorders(runtime: DiagnosticsRecorderRuntime
     addRunAttrs(spanAttrs, evt);
     assignOtelToolIdentityAttributes(spanAttrs, evt);
     assignOtelToolContentAttributes(spanAttrs, toolContent, contentCapturePolicy);
-    if (evt.toolName === "exec" && evt.deferredProcessCompletion !== true) {
-      // Foreground exec completion is consumed before this event. Other exec
-      // targets have no later process event, so they must not retain a parent.
-      clearDeferredExecParentContext(evt, metadata);
-    }
+    // Foreground exec completion is consumed before this event. Other exec
+    // targets have no later process event, so they must not retain a parent.
+    clearSettledExecParentContext(evt, metadata);
     const span =
       takeTrackedTrustedSpan(evt, metadata) ??
       spanWithDuration("openclaw.tool.execution", spanAttrs, evt.durationMs, {
@@ -207,9 +220,9 @@ export function createToolAndSystemRecorders(runtime: DiagnosticsRecorderRuntime
     if (!tracesEnabled) {
       return;
     }
-    if (evt.toolName === "exec") {
-      clearDeferredExecParentContext(evt, metadata);
-    }
+    // A policy result can replace a running response after the process starts.
+    // Only clear the parent when no later process completion is expected.
+    clearSettledExecParentContext(evt, metadata);
     const spanAttrs: Record<string, string | number | boolean> = { ...attrs };
     addRunAttrs(spanAttrs, evt);
     assignOtelToolIdentityAttributes(spanAttrs, evt);
@@ -242,9 +255,9 @@ export function createToolAndSystemRecorders(runtime: DiagnosticsRecorderRuntime
     if (!tracesEnabled) {
       return;
     }
-    if (evt.toolName === "exec") {
-      clearDeferredExecParentContext(evt, metadata);
-    }
+    // A policy result can replace a running response after the process starts.
+    // Only clear the parent when no later process completion is expected.
+    clearSettledExecParentContext(evt, metadata);
     const spanAttrs: Record<string, string | number | boolean> = {
       ...toolExecutionBaseAttrs(evt),
       "openclaw.outcome": "blocked",

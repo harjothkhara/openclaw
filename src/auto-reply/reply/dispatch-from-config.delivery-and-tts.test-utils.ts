@@ -6,7 +6,13 @@ import {
   type OpenClawConfig,
 } from "../../config/config.js";
 import {
+  emitTrustedDiagnosticEvent,
+  onInternalDiagnosticEvent,
+} from "../../infra/diagnostic-events.js";
+import {
+  createChildDiagnosticTraceContext,
   createDiagnosticTraceContext,
+  freezeDiagnosticTraceContext,
   getActiveDiagnosticTraceContext,
   runWithDiagnosticTraceContext,
 } from "../../infra/diagnostic-trace-context.js";
@@ -832,7 +838,7 @@ describe("dispatchReplyFromConfig", () => {
     expect(skippedEvent?.spanId).toBe(inboundTrace.spanId);
   });
 
-  it("creates one trace scope for direct reply dispatch callers", async () => {
+  it("keeps direct reply harness diagnostics in one message trace", async () => {
     setNoAbort();
     const cfg = { diagnostics: { enabled: true } } as OpenClawConfig;
     const ctx = buildTestCtx({
@@ -847,8 +853,27 @@ describe("dispatchReplyFromConfig", () => {
     });
     let resolverTrace = getActiveDiagnosticTraceContext();
     let processedTrace = getActiveDiagnosticTraceContext();
+    let harnessTrace: ReturnType<typeof createDiagnosticTraceContext> | undefined;
+    const harnessEvents: Array<{ trace?: { traceId: string; parentSpanId?: string } }> = [];
+    const unsubscribeDiagnostics = onInternalDiagnosticEvent((event) => {
+      if (event.type === "harness.run.started") {
+        harnessEvents.push(event);
+      }
+    });
     const replyResolver = vi.fn(async () => {
       resolverTrace = getActiveDiagnosticTraceContext();
+      harnessTrace = resolverTrace
+        ? freezeDiagnosticTraceContext(createChildDiagnosticTraceContext(resolverTrace))
+        : createDiagnosticTraceContext();
+      emitTrustedDiagnosticEvent({
+        type: "harness.run.started",
+        runId: "direct-run-1",
+        harnessId: "openclaw",
+        provider: "openai",
+        model: "gpt-5.5",
+        channel: "test",
+        trace: harnessTrace,
+      });
       return { text: "hi" } satisfies ReplyPayload;
     });
     diagnosticMocks.logMessageProcessed.mockImplementation(() => {
@@ -863,6 +888,7 @@ describe("dispatchReplyFromConfig", () => {
         replyResolver,
       });
     } finally {
+      unsubscribeDiagnostics();
       diagnosticMocks.logMessageProcessed.mockReset();
     }
 
@@ -870,6 +896,9 @@ describe("dispatchReplyFromConfig", () => {
     expect(resolverTrace?.traceId).toBeTruthy();
     expect(processedTrace?.traceId).toBe(resolverTrace?.traceId);
     expect(processedTrace?.spanId).toBe(resolverTrace?.spanId);
+    expect(harnessEvents).toHaveLength(1);
+    expect(harnessEvents[0]?.trace?.traceId).toBe(processedTrace?.traceId);
+    expect(harnessEvents[0]?.trace?.parentSpanId).toBe(processedTrace?.spanId);
   });
 
   it("releases inbound dedupe when dispatch fails before completion", async () => {
