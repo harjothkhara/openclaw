@@ -2,7 +2,7 @@
 // core plugin-state store: envelope validation, process-liveness hygiene, and
 // per-process cleanup. Domain modules own record fields and display keys.
 import { randomUUID } from "node:crypto";
-import { getProcessStartTime } from "../shared/pid-alive.js";
+import { getFileLockProcessStartTime } from "../shared/pid-alive.js";
 import { createCorePluginStateSyncKeyedStore } from "./plugin-state-store.js";
 
 /** Envelope persisted with every cross-process runtime health record. */
@@ -69,23 +69,40 @@ export function createRuntimeHealthRecordEnvelope(failedAt: Date): RuntimeHealth
   return {
     processId: process.pid,
     processToken: currentProcessToken,
-    processStartTime: getProcessStartTime(process.pid),
+    processStartTime: getFileLockProcessStartTime(process.pid),
     failedAtMs: failedAt.getTime(),
   };
 }
 
 // Records surface only with a positive incarnation match; unverifiable
 // identity fails closed so a recycled PID can never keep stale failures alive.
-// Own PID: the per-process token proves incarnation on every platform.
-// Sibling PIDs: the Linux /proc starttime must match; where it is unavailable
-// (non-Linux, /proc read failure) sibling visibility is sacrificed instead of
-// trusting a bare kill(0) liveness probe.
-function processLooksLive(record: RuntimeHealthRecordEnvelope): boolean {
+// Own PID: the per-process token proves incarnation without probing the OS.
+// Sibling PIDs: the recorded start time must still match, read through the same
+// cross-platform identity every lock/lease in the repo uses, so a gateway-written
+// record stays visible to a sibling CLI off Linux instead of being dropped.
+// Writer and reader must stay on one function: the units differ per platform
+// (Linux /proc ticks vs Darwin epoch seconds) and are only ever compared locally.
+function processLooksLive(
+  record: RuntimeHealthRecordEnvelope,
+  resolveStartTime: (pid: number) => number | null,
+): boolean {
   if (record.processId === process.pid) {
     return record.processToken === currentProcessToken;
   }
-  const currentStartTime = getProcessStartTime(record.processId);
+  const currentStartTime = resolveStartTime(record.processId);
   return currentStartTime !== null && currentStartTime === record.processStartTime;
+}
+
+// Darwin resolves start times by spawning `ps`, so one list() pass must not pay
+// that per record; sibling records normally share a handful of recorder PIDs.
+function createProcessStartTimeMemo(): (pid: number) => number | null {
+  const cache = new Map<number, number | null>();
+  return (pid) => {
+    if (!cache.has(pid)) {
+      cache.set(pid, getFileLockProcessStartTime(pid));
+    }
+    return cache.get(pid) ?? null;
+  };
 }
 
 /** Opens a SQLite-backed health record namespace shared across runtime processes. */
@@ -112,9 +129,10 @@ export function createRuntimeHealthStore<T extends RuntimeHealthRecordEnvelope>(
     list() {
       try {
         const byGroup = new Map<string, T>();
+        const resolveStartTime = createProcessStartTimeMemo();
         for (const entry of openStore().entries()) {
           const record = normalize(entry.value);
-          if (!record || !processLooksLive(record)) {
+          if (!record || !processLooksLive(record, resolveStartTime)) {
             continue;
           }
           const groupKey = options.displayKey(record);

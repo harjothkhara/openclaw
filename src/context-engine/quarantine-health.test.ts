@@ -6,7 +6,7 @@ import {
   resetPluginStateStoreForTests,
 } from "../plugin-state/plugin-state-store.js";
 import { createRuntimeHealthRecordEnvelope } from "../plugin-state/runtime-health-store.js";
-import { getProcessStartTime } from "../shared/pid-alive.js";
+import { getFileLockProcessStartTime } from "../shared/pid-alive.js";
 import { withStateDirEnv } from "../test-helpers/state-dir-env.js";
 import {
   clearPersistedContextEngineQuarantineForProcess,
@@ -22,9 +22,10 @@ import { resetContextEngineRuntimeQuarantineForTests } from "./registry.test-sup
 const CONTEXT_ENGINE_QUARANTINE_OWNER_ID = "core:context-engine-quarantine-health";
 const CONTEXT_ENGINE_QUARANTINE_NAMESPACE = "runtime-quarantines";
 
-// Sibling records need a verifiable /proc starttime, so sibling-visibility
-// coverage only runs where that identity source exists.
-const hasProcessStartTimes = process.platform === "linux";
+// Sibling records need a verifiable process start time. The store reads it
+// through the repo's cross-platform lock identity, so this covers Linux and
+// macOS and still skips anywhere that identity is unavailable.
+const hasProcessStartTimes = getFileLockProcessStartTime(process.pid) !== null;
 
 type ContextEngineQuarantineTestRecord = {
   engineId: string;
@@ -123,7 +124,7 @@ describe("context engine quarantine health", () => {
             reason: "sibling process failure",
             failedAtMs: 789,
             processId: siblingProcessId,
-            processStartTime: getProcessStartTime(siblingProcessId),
+            processStartTime: getFileLockProcessStartTime(siblingProcessId),
           });
 
           clearPersistedContextEngineQuarantineForProcess("lossless-claw", process.pid);
@@ -166,7 +167,7 @@ describe("context engine quarantine health", () => {
             reason: "sibling process failure",
             failedAtMs: 789,
             processId: siblingProcessId,
-            processStartTime: getProcessStartTime(siblingProcessId),
+            processStartTime: getFileLockProcessStartTime(siblingProcessId),
           });
 
           resetContextEngineRuntimeQuarantineForTests();
@@ -184,6 +185,15 @@ describe("context engine quarantine health", () => {
       });
     },
   );
+
+  it("stamps records with the same process identity the reader verifies", () => {
+    // Writer and reader must resolve identity through one function. The units are
+    // platform-specific (Linux /proc ticks vs Darwin epoch seconds), so a split
+    // would silently drop every sibling record rather than fail loudly.
+    expect(createRuntimeHealthRecordEnvelope(new Date(0)).processStartTime).toBe(
+      getFileLockProcessStartTime(process.pid),
+    );
+  });
 
   it("drops records from a previous incarnation of this PID", async () => {
     await withStateDirEnv("openclaw-context-engine-quarantine-incarnation-", async () => {
@@ -207,7 +217,7 @@ describe("context engine quarantine health", () => {
       await withStateDirEnv("openclaw-context-engine-quarantine-pid-reuse-", async () => {
         await withLiveSiblingProcess(async (siblingProcessId) => {
           resetContextEngineRuntimeQuarantineForTests();
-          const siblingStartTime = getProcessStartTime(siblingProcessId);
+          const siblingStartTime = getFileLockProcessStartTime(siblingProcessId);
           seedSiblingQuarantineForTest({
             engineId: "lossless-claw",
             owner: "plugin:lossless-claw",
@@ -228,8 +238,8 @@ describe("context engine quarantine health", () => {
     await withStateDirEnv("openclaw-context-engine-quarantine-unverified-", async () => {
       await withLiveSiblingProcess(async (siblingProcessId) => {
         resetContextEngineRuntimeQuarantineForTests();
-        // A null recorded start time (non-Linux recorder or /proc read failure)
-        // must fail closed instead of trusting bare PID liveness.
+        // A null recorded start time (identity source unavailable to the
+        // recorder) must fail closed instead of trusting bare PID liveness.
         seedSiblingQuarantineForTest({
           engineId: "lossless-claw",
           owner: "plugin:lossless-claw",
