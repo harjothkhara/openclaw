@@ -109,6 +109,7 @@ describe("before_tool_call loop detection behavior", () => {
   const enabledLoopDetectionContext = {
     agentId: "main",
     sessionKey: "main",
+    runId: "test-run",
     loopDetection: { enabled: true },
   };
 

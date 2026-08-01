@@ -643,12 +643,12 @@ describe("tool-loop-detection", () => {
         toolName,
         toolParams: { attempt: 5 },
         evidence: globalResult.vetoEvidence,
-        detector: globalResult.detector,
-        count: globalResult.count,
-        message: globalResult.message,
       });
-      const latchedResult = detectToolCallLoop(state, "other_tool", {}, config);
-      expect(latchedResult.stuck && latchedResult.count).toBe(5);
+      const nextResult = detectToolCallLoop(state, toolName, { attempt: 6 }, config);
+      expect(nextResult.stuck && nextResult.detector).toBe("global_circuit_breaker");
+      if (nextResult.stuck) {
+        expect(nextResult.count).toBe(6);
+      }
     });
 
     it("preserves genuine ping-pong ordering through global escalation", () => {
@@ -710,11 +710,11 @@ describe("tool-loop-detection", () => {
         ...(loopResult.pairedToolName && { pairedToolName: loopResult.pairedToolName }),
       });
 
-      expect(detectToolCallLoop(state, "list", listParams, config)).toMatchObject({
+      expect(detectToolCallLoop(state, "read", readParams, config)).toMatchObject({
         stuck: true,
         detector: "global_circuit_breaker",
-        count: 6,
-        pairedToolName: "read",
+        count: 7,
+        pairedToolName: "list",
       });
     });
 

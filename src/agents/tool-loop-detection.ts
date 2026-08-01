@@ -631,7 +631,10 @@ export function detectToolCallLoop(
     return { stuck: false };
   }
   const history = selectHistoryForScope(state.toolCallHistory ?? [], scope);
-  const latchedBreaker = history.findLast((record) => record.globalLoopBreaker)?.globalLoopBreaker;
+  const runId = normalizeRunId(scope?.runId);
+  const latchedBreaker = runId
+    ? history.findLast((record) => record.globalLoopBreaker)?.globalLoopBreaker
+    : undefined;
   if (latchedBreaker) {
     return {
       stuck: true,
@@ -850,7 +853,7 @@ export function recordToolLoopVeto(
   const runId = normalizeRunId(params.runId);
   const argsHash = hashToolCall(params.toolName, params.toolParams);
   const history = state.toolCallHistory ?? [];
-  if (params.detector === "global_circuit_breaker") {
+  if (params.detector === "global_circuit_breaker" && runId) {
     const existingLatch = history.findLast(
       (call) => normalizeRunId(call.runId) === runId && call.globalLoopBreaker,
     );
@@ -873,6 +876,7 @@ export function recordToolLoopVeto(
     }
     if (
       params.detector === "global_circuit_breaker" &&
+      runId &&
       params.count !== undefined &&
       params.message
     ) {
