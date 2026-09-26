@@ -460,10 +460,13 @@ export async function createBackupArchive(
   const tempDir = scratch.directory;
   let publication: BackupArchivePublication;
   try {
-    publication = await createBackupArchivePublication(outputPath);
+    publication = await createBackupArchivePublication(outputPath, opts.log);
   } catch (error) {
     await finishBackupScratch(scratch, opts.log);
     throw formatBackupOutputFailure(error, outputPath, "publication");
+  }
+  if (publication.warnings.length) {
+    result.warnings = [...(result.warnings ?? []), ...publication.warnings];
   }
   const tempArchivePath = publication.tempArchivePath;
   let snapshotFacts: readonly BackupSqliteSnapshotFact[] = [];
