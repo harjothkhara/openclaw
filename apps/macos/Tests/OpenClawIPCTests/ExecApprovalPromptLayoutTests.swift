@@ -62,7 +62,6 @@ struct ExecApprovalPromptLayoutTests {
             let prompt = Task {
                 await ExecApprovalsPromptPresenter.prompt(
                     ExecApprovalPromptRequest(command: "/usr/bin/printf stale"),
-                    timeoutMs: 100,
                     isStillEligible: {
                         eligibilityChecks += 1
                         return eligible

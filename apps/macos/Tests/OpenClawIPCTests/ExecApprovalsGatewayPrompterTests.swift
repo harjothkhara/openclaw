@@ -85,7 +85,6 @@ private final class ApprovalPrompterGatewayFixture {
     }
 }
 
-@Suite(.serialized)
 @MainActor
 struct ExecApprovalsGatewayPrompterTests {
     @Test func `session match prefers active session`() {
