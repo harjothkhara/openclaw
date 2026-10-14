@@ -1,7 +1,7 @@
 import { writeFile } from "node:fs/promises";
 import path from "node:path";
 import { expect, it } from "vitest";
-import { takeControlUiElementScreenshot } from "../test-helpers/control-ui-e2e-screenshot.ts";
+import { takeControlUiViewportScreenshot } from "../test-helpers/control-ui-e2e-screenshot.ts";
 import {
   LOCAL_GIT_WORKSPACE_RESPONSES,
   captureUiProofEnabled,
@@ -23,7 +23,7 @@ suite.define(() => {
           providerId: "crabbox",
           machines: [{ id: "standard", label: "Standard", cpu: 32, memoryGb: 64, default: true }],
         };
-        const disabledReason = "Upgrade Crabbox to 0.53.1 or newer, then restart the Gateway.";
+        const disabledReason = "Upgrade Crabbox to enable this operating system.";
         const gateway = await installMockGateway(page, {
           operatorScopes: ["operator.admin", "operator.read", "operator.write"],
           workspaceGit: true,
@@ -39,7 +39,7 @@ suite.define(() => {
         await page.goto(`${suite.server.baseUrl}new`);
         await gateway.waitForRequest("environments.list");
         const trigger = page.locator("#new-session-where-trigger");
-        const picker = page.locator("wa-popover.new-session-page__where-popover");
+        const picker = page.locator(".oc-popover.new-session-page__where-popover");
         await trigger.click();
         await picker.getByRole("button", { name: "aws", exact: true }).click();
         await picker.locator('[data-value="cloud:aws"]').hover();
@@ -49,9 +49,9 @@ suite.define(() => {
           if (captureUiProofEnabled) {
             await writeFile(
               path.join(suite.artifactDir, fileName),
-              await takeControlUiElementScreenshot(
+              await takeControlUiViewportScreenshot(
                 page,
-                picker.locator('wa-popup [part="popup"]'),
+                picker.locator(".new-session-page__cloud-configuration"),
                 [picker.locator('[data-value="machine:standard"]')],
               ),
             );
@@ -88,7 +88,13 @@ suite.define(() => {
         await page.locator(".new-session-page__message").fill("Continue on Linux");
         await page.getByRole("button", { name: "Start session" }).click();
         const dispatch = await gateway.waitForRequest("sessions.dispatch");
-        expect(dispatch.params).toEqual({ key: sessionKey, agentId: "main", profileId: "aws" });
+        expect(dispatch.params).toEqual({
+          key: sessionKey,
+          agentId: "main",
+          profileId: "aws",
+          os: "linux",
+          machineClass: "standard",
+        });
       },
     );
   });

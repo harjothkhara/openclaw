@@ -71,6 +71,19 @@ Manually allowlisted senders are not automatically command owners. If an
 authorized sender has no owner access, owner-only commands reply with the exact
 `openclaw config set commands.ownerAllowFrom` command for the operator to run.
 
+### Set up an owner without DM pairing
+
+Run `openclaw channels add` and complete the channel setup. When no command owner
+exists, the wizard offers **Set up my operator account** separately from chat
+access. Enter your personal user ID and confirm the exact account that may
+administer this installation. **Skip for now** leaves ownership unchanged.
+
+This also works for Discord servers and other group channels with DMs disabled.
+An owner can use `/update`, restart the Gateway, change configuration, and approve
+commands. Ownership does not grant chat access: existing channel and group access
+rules still apply. The wizard never promotes chat allowlists automatically or
+replaces an existing owner.
+
 <Note>
 WhatsApp's login QR links a WhatsApp account to OpenClaw. DM access requests
 approve people who message that account. These are separate flows.
@@ -123,13 +136,14 @@ database at
 Account scoping behavior:
 
 - each request and approved sender is keyed by channel and account
-- channels using the pairing API read only the canonical SQLite rows; they do not merge legacy files
+- channels using the pairing API read only the current SQLite rows; they do not merge legacy files
 
 Older gateways wrote `<channel>-pairing.json` and
 `<channel>-<accountId>-allowFrom.json` under `~/.openclaw/credentials/`.
-Startup migration and `openclaw doctor --fix` import those files into SQLite and
-remove each source after a successful import. Treat the SQLite database as
-sensitive because these rows gate access to your assistant.
+`openclaw doctor --fix` imports those files into SQLite and removes each source
+after a successful import. Normal Gateway startup leaves these legacy files
+unchanged. Treat the SQLite database as sensitive because these rows gate access
+to your assistant.
 
 <Note>
 The pairing allowlist store is for DM access. Group authorization is separate.
@@ -213,7 +227,7 @@ For Tailscale, public, or other remote mobile pairing, use Tailscale Serve/Funne
 or another `wss://` Gateway URL. Plaintext `ws://` setup codes are accepted only
 for loopback, private LAN addresses, `.local` Bonjour hosts, and the Android
 emulator host. Non-loopback plaintext routes receive limited access. Tailnet
-CGNAT addresses, `.ts.net` names, and public hosts still fail closed before
+CGNAT addresses, `.ts.net` names, and public hosts are still rejected before
 QR/setup-code issuance.
 
 OpenClaw advertises Tailscale setup URLs only when it owns the route through
@@ -283,8 +297,9 @@ Stored in the shared SQLite state database at `~/.openclaw/state/openclaw.sqlite
 - pending device pairing requests (short-lived; they expire after 5 minutes)
 - paired devices + tokens
 
-Older gateways kept this state in `~/.openclaw/devices/*.json`; those files are
-imported into SQLite at gateway startup and archived with a `.migrated` suffix.
+Older gateways kept this state in `~/.openclaw/devices/*.json`. Stop the Gateway
+and run `openclaw doctor --fix` to import those files into SQLite and archive
+them with a `.migrated` suffix. Normal startup leaves legacy files unchanged.
 
 ### Notes
 
