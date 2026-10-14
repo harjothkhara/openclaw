@@ -484,7 +484,7 @@ describe("runSessionBackfill", () => {
 
   it("omits assistant process chatter from canonical backfill candidates", async () => {
     const workspaceDir = await createIsolatedWorkspace("assistant-chatter-");
-    const messages: TranscriptMessage[] = [
+    await seedCanonicalTranscript("assistant-chatter", [
       {
         role: "user",
         content: "Owner approved deployment plan #123.",
@@ -501,8 +501,7 @@ describe("runSessionBackfill", () => {
         content,
         timestamp: "2026-02-01T10:01:00.000Z",
       })),
-    ];
-    await seedCanonicalTranscript("assistant-chatter", messages);
+    ]);
 
     const result = await runSessionBackfill({ agentId: "main", workspaceDir, timezone: "UTC" });
     expect(result.days[0]?.topCandidates).toEqual([
