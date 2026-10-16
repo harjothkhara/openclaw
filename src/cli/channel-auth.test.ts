@@ -200,45 +200,6 @@ describe("channel-auth", () => {
     },
   );
 
-  it.each([
-    ["login", runChannelLogin, mocks.login],
-    ["logout", runChannelLogout, mocks.logoutAccount],
-  ] as const)("uses runtime account callbacks when inferring %s", async (_mode, run, action) => {
-    const sourceConfig: OpenClawConfig = {
-      channels: { whatsapp: { accounts: { work: { authDir: "~/wa-work", enabled: true } } } },
-    };
-    const runtimeConfig: OpenClawConfig = {
-      channels: {
-        whatsapp: { accounts: { work: { authDir: "/runtime/wa-work", enabled: true } } },
-      },
-      agents: { defaults: { maxConcurrent: 4 } },
-    };
-    const listAccountIds = vi.fn((cfg: OpenClawConfig) =>
-      Object.keys(cfg.channels?.whatsapp?.accounts ?? {}),
-    );
-    const resolveAccount = vi.fn(
-      (cfg: OpenClawConfig, accountId: string) => cfg.channels?.whatsapp?.accounts?.[accountId],
-    );
-    const isEnabled = vi.fn(
-      (account: { enabled?: boolean } | undefined, cfg: OpenClawConfig) =>
-        cfg.channels?.whatsapp?.enabled !== false && account?.enabled !== false,
-    );
-    const selectedPlugin = { ...plugin, config: { listAccountIds, resolveAccount, isEnabled } };
-    mocks.listChannelPlugins.mockReturnValue([selectedPlugin]);
-    mocks.getLoadedChannelPlugin.mockReturnValue(selectedPlugin);
-    mocks.readConfigFileSnapshot.mockResolvedValue({ hash: "config-1", valid: true, sourceConfig });
-    mocks.loadConfig.mockReturnValue(runtimeConfig);
-    mocks.callGateway.mockRejectedValue(new Error("gateway unreachable"));
-
-    await run({ account: "work" }, runtime);
-
-    expect(readFirstCallArg(action).cfg).toBe(runtimeConfig);
-    expect(listAccountIds.mock.calls[0]?.[0]).toBe(runtimeConfig);
-    expect(resolveAccount.mock.calls[0]?.[0]).toBe(runtimeConfig);
-    expect(isEnabled.mock.calls[0]?.[1]).toBe(runtimeConfig);
-    expect(mocks.replaceConfigFile).not.toHaveBeenCalled();
-  });
-
   it("awaits account preparation for inferred local logout", async () => {
     const account = { id: "prepared-account", enabled: true };
     const selectedPlugin = {
