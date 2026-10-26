@@ -39,7 +39,6 @@ jobs:
       - name: Set up Node and pnpm
         uses: pnpm/action-setup@v4
         with:
-          version: 12.15.0
           run_install: false
 
       - name: Select supported Node
