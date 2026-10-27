@@ -52,8 +52,8 @@ jobs:
           [[ "$(git -C sut-green rev-parse HEAD)" == "$TARGET_SHA" ]]
           branch_sha="$(git ls-remote https://github.com/openclaw/openclaw.git refs/heads/openclaw/marine-crayfish-3 | cut -f1)"
           [[ "$branch_sha" == "$TARGET_SHA" ]]
-          echo 'f36f1cd863626f9071066db7a87758b4ec71fb72e8414e50e6f732174a8643a2  proof-runner/proof/new-thread.mjs' | shasum -a 256 -c
-          echo '1e72773582dcf974edc527ae84e2eb38a9d139d24ca4bea9d64a22738be87  proof-runner/proof/new-thread-ax.js' | shasum -a 256 -c
+          echo '730ead33948d2cffe2c109f4f3cbce9eacaf20fd6000d2395c4fa9a540e6d6ee  proof-runner/proof/new-thread.mjs' | shasum -a 256 -c
+          echo '2a00074eb09376e2bab0f2569bbab9940bd04192363f89edccc80ce31f535f24  proof-runner/proof/new-thread-ax.js' | shasum -a 256 -c
           node --check proof-runner/proof/new-thread.mjs
           printf 'Base %s\nPR %s\nWorkflow %s\n' "$BASE_SHA" "$TARGET_SHA" "$GITHUB_SHA"
       - name: Set up pnpm
@@ -65,6 +65,18 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 24.22.1
+      - name: Preflight hosted GUI and Accessibility
+        shell: bash
+        run: |
+          set -euo pipefail
+          launchctl print "gui/$(id -u)" >/dev/null
+          /usr/bin/perl -e 'alarm 15; exec @ARGV' /usr/bin/osascript -l JavaScript \
+            -e 'var se = Application("System Events"); var p = se.processes(); if (p.length < 1) throw Error("No accessible GUI processes"); p.length' \
+            > /dev/null
+          /usr/bin/perl -e 'alarm 15; exec @ARGV' /usr/sbin/screencapture -x -t png "$GITHUB_WORKSPACE/gui-preflight.png"
+          /usr/bin/sips -g pixelWidth -g pixelHeight "$GITHUB_WORKSPACE/gui-preflight.png" \
+            > "$GITHUB_WORKSPACE/gui-preflight-dimensions.txt"
+          test -s "$GITHUB_WORKSPACE/gui-preflight.png"
       - name: Restore exact base native build
         id: base-cache
         uses: actions/cache/restore@v4
@@ -88,7 +100,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          node proof-runner/proof/new-thread.mjs \
+          /usr/bin/perl -e 'alarm 600; exec @ARGV' node proof-runner/proof/new-thread.mjs \
             --source "$GITHUB_WORKSPACE/sut-red" --app "$GITHUB_WORKSPACE/sut-red/dist/OpenClaw.app" \
             --sha "$BASE_SHA" --mode red --out "$GITHUB_WORKSPACE/new-thread-red"
       - name: Release disposable base checkout
@@ -117,9 +129,36 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          node proof-runner/proof/new-thread.mjs \
+          /usr/bin/perl -e 'alarm 600; exec @ARGV' node proof-runner/proof/new-thread.mjs \
             --source "$GITHUB_WORKSPACE/sut-green" --app "$GITHUB_WORKSPACE/sut-green/dist/OpenClaw.app" \
             --sha "$TARGET_SHA" --mode green --out "$GITHUB_WORKSPACE/new-thread-green"
+      - name: Require exact-head red and green verdicts
+        shell: bash
+        run: |
+          set -euo pipefail
+          node - <<'NODE'
+          const fs = require('node:fs');
+          for (const [arm, status, sha] of [
+            ['red', 'expected-red', process.env.BASE_SHA],
+            ['green', 'green', process.env.TARGET_SHA],
+          ]) {
+            const r = JSON.parse(fs.readFileSync('new-thread-' + arm + '/evidence/verdict.json', 'utf8'));
+            if (r.status !== status || r.sourceSha !== sha || r.providerPosts !== 0 ||
+                r.cleanup !== 'owned-process-groups-retired') {
+              throw new Error(arm + ' verdict did not meet required proof contract');
+            }
+          }
+          NODE
+      - name: Redact package log paths
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          for log in red-package.log green-package.log; do
+            if [[ -f "$log" ]]; then
+              sed -i '' -e "s|$GITHUB_WORKSPACE|[WORKSPACE]|g" -e "s|$HOME|[HOME]|g" "$log"
+            fi
+          done
       - name: Upload sanitized evidence
         if: always()
         uses: actions/upload-artifact@v4
@@ -128,4 +167,7 @@ jobs:
           path: |
             new-thread-red/evidence/
             new-thread-green/evidence/
-          if-no-files-found: warn
+            gui-preflight-dimensions.txt
+            red-package.log
+            green-package.log
+          if-no-files-found: error
