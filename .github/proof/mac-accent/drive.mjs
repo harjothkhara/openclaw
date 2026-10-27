@@ -190,7 +190,7 @@ try {
       "--port",
       String(port),
       "--ws-log",
-      "full",
+      "compact",
       "--verbose",
     ],
     "gateway",
