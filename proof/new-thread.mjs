@@ -199,6 +199,19 @@ async function main() {
       path.join(evidence, name),
       redact(typeof value === "string" ? value : JSON.stringify(value, null, 2) + "\n"),
     );
+  const saveGatewayDiagnostics = async (checkpoint) => {
+    await save("gateway-startup.json", {
+      checkpoint,
+      started: Boolean(gateway?.child.pid),
+      pid: gateway?.child.pid ?? null,
+      streamsClosed: gateway?.closed ?? false,
+      exit: report.gatewayExit ?? null,
+      stdoutBytes: Buffer.byteLength(gateway?.stdout ?? ""),
+      stderrBytes: Buffer.byteLength(gateway?.stderr ?? ""),
+    });
+    await save("gateway-stdout.log", gateway?.stdout ?? "");
+    await save("gateway-stderr.log", gateway?.stderr ?? "");
+  };
   const report = {
     schema: 1,
     mode,
@@ -441,7 +454,6 @@ async function main() {
         defaults: {
           workspace: path.join(priv, "workspace"),
           skipBootstrap: true,
-          heartbeat: { every: "0m" },
           model: { primary: "openai/proof", fallbacks: [] },
           models: { "openai/proof": { agentRuntime: { id: "openclaw" } } },
         },
@@ -451,6 +463,28 @@ async function main() {
       tools: { allow: [] },
     };
     await fs.writeFile(gwEnv.OPENCLAW_CONFIG_PATH, JSON.stringify(cfg), { mode: 0o600 });
+    const configCheck = start(
+      "gateway-config-validation",
+      ["pnpm", "openclaw", "--profile", gwProfile, "config", "validate", "--json"],
+      gwEnv,
+      true,
+    );
+    let configResult;
+    try {
+      configResult = await bounded("Gateway config validation", configCheck.done, 30000);
+    } finally {
+      if (!configCheck.closed) kill(configCheck);
+      await save("gateway-config-validation.json", {
+        result: configResult ?? null,
+        streamsClosed: configCheck.closed,
+        stdout: configCheck.stdout,
+        stderr: configCheck.stderr,
+      });
+    }
+    assert.equal(configResult.code, 0, "Complete Gateway config validation failed");
+    const configReceipt = JSON.parse(configCheck.stdout);
+    assert.equal(configReceipt.valid, true, "Gateway config validation did not return valid=true");
+    assert.equal(path.resolve(configReceipt.path), gwEnv.OPENCLAW_CONFIG_PATH);
     const cli = (method) => [
       "pnpm",
       "openclaw",
@@ -490,6 +524,7 @@ async function main() {
         "full",
       ],
       gwEnv,
+      true,
     );
     gateway.child.once("exit", (code, signal) => {
       report.gatewayExit = { code, signal, expected: shuttingDown };
@@ -834,6 +869,11 @@ async function main() {
     finished = true;
     const cleanupErrors = [];
     try {
+      await saveGatewayDiagnostics("before-cleanup");
+    } catch (error) {
+      cleanupErrors.push("Gateway diagnostic export failed: " + String(error));
+    }
+    try {
       if (monitorTask) await bounded("watchdog settlement", monitorTask, 1500);
     } catch (e) {
       cleanupErrors.push(String(e));
@@ -872,6 +912,11 @@ async function main() {
         return false;
       }
     });
+    try {
+      await saveGatewayDiagnostics("after-cleanup");
+    } catch (error) {
+      cleanupErrors.push("Gateway diagnostic export failed: " + String(error));
+    }
     report.cleanupErrors = cleanupErrors;
     report.cleanup =
       survivors.length || cleanupErrors.length ? "failed" : "owned-process-groups-retired";
