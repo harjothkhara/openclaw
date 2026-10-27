@@ -94,7 +94,7 @@ jobs:
           set -euo pipefail
           node scripts/test-macos-native.mts named \
             --package-path apps/macos --build-system native \
-            --enable-code-coverage --skip-build \
+            --skip-build \
             --filter MacGatewayChatTransportMappingTests \
             2>&1 | tee proof-logs/transport-tests.log
           grep -Fq 'explicitSessionCreationUsesCapturedGateway' proof-logs/transport-tests.log
