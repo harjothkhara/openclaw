@@ -39,6 +39,14 @@ jobs:
           [[ "$TARGET_SHA" == "2d61f300b4e45639f1515d5e99610849ab3fa484" ]]
           printf 'Requested: %s\nChecked out: %s\nWorkflow: %s\n' "$TARGET_SHA" "$actual" "$GITHUB_SHA" | tee proof-logs/identity.log
 
+      - name: Check out fork-only proof driver
+        uses: actions/checkout@v4
+        with:
+          repository: harjothkhara/openclaw
+          ref: proof/mac-accent-128922-2026-10-27
+          path: proof-driver
+          persist-credentials: false
+
       - name: Set up pnpm
         uses: pnpm/action-setup@v4
         with:
@@ -79,6 +87,16 @@ jobs:
             2>&1 | tee proof-logs/control-tests.log
           grep -Fq 'Suite GatewayConnectionControlTests passed' proof-logs/control-tests.log
           grep -Eq 'Test run with [1-9][0-9]* tests' proof-logs/control-tests.log
+
+      - name: Prove live Mac chat accent change
+        shell: bash
+        run: |
+          set -euo pipefail
+          node proof-driver/.github/proof/mac-accent/drive.mjs \
+            "$PWD" \
+            "$PWD/proof-driver/.github/proof/mac-accent" \
+            "$PWD/proof-logs/live-app" \
+            2>&1 | tee proof-logs/live-app-run.log
 
       - name: Upload complete proof logs
         if: always()
