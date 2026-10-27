@@ -5,10 +5,10 @@ on:
   workflow_dispatch:
     inputs:
       live_attempt:
-        description: Codex live-app slot (maximum two Mac jobs; admission-only failure does not count)
+        description: Codex live-app slot (third slot authorized after two harness failures; admission-only failure does not count)
         required: true
         type: choice
-        options: ["1", "2"]
+        options: ["1", "2", "3"]
       serial_confirmed:
         description: Codex verified no other Mac proof queued/running and ledger permits this attempt
         required: true
@@ -24,7 +24,7 @@ jobs:
   admission:
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    # Independently reviewed preparation; Codex owns serial dispatch and the two-attempt ledger.
+    # Codex owns serial dispatch and the bounded attempt ledger.
     if: github.event_name == 'workflow_dispatch' && github.repository == 'harjothkhara/openclaw'
     steps:
       - uses: actions/github-script@v7
@@ -32,7 +32,7 @@ jobs:
           script: |
             if (context.repo.owner !== 'harjothkhara' || context.repo.repo !== 'openclaw' || context.ref !== 'refs/heads/proof/mac-accent-128922-2026-10-27') throw Error('Wrong fork/ref');
             if (context.payload.inputs.serial_confirmed !== 'true') throw Error('Codex serial/attempt ledger confirmation required');
-            if (!['1','2'].includes(context.payload.inputs.live_attempt)) throw Error('Invalid live-attempt slot');
+            if (!['1','2','3'].includes(context.payload.inputs.live_attempt)) throw Error('Invalid live-attempt slot');
             const repo = context.repo;
             const current = (await github.rest.actions.getWorkflowRun({...repo,run_id:context.runId})).data;
             if (current.run_attempt !== 1) throw Error('Do not rerun jobs; a new authorized dispatch consumes the next ledger slot');
@@ -63,7 +63,7 @@ jobs:
               if (jobs.total_count > 100) throw Error('Proof job history query incomplete');
               if (jobs.jobs.some(j => j.name === 'accent' && j.conclusion !== 'skipped')) liveAttempts++;
             }
-            if (liveAttempts >= 2 || liveAttempts + 1 !== Number(context.payload.inputs.live_attempt)) throw Error('Two live-app attempt budget/ledger mismatch');
+            if (liveAttempts >= 3 || liveAttempts + 1 !== Number(context.payload.inputs.live_attempt)) throw Error('Three live-app attempt budget/ledger mismatch');
             const pr = (await github.rest.pulls.get({owner:'openclaw',repo:'openclaw',pull_number:185529})).data;
             if (pr.head.sha !== 'b34033c907786da68f99e5006d0feb2bf8793b7f' || !pr.draft) throw Error('Pinned draft PR changed');
   accent:
@@ -110,8 +110,9 @@ jobs:
           cd proof-runner/proof/mac-accent-185529
           shasum -a 256 -c SHA256SUMS
           node --check accent.mjs
+          node --check process-guard.mjs
           node --check priming.mjs
-          node --test oracle.test.mjs
+          node --test oracle.test.mjs process-guard.test.mjs
           # Compilation/TCC must fail before either expensive app build.
           xcrun swiftc window.swift -o "$RUNNER_TEMP/accent-window-helper"
           "$RUNNER_TEMP/accent-window-helper" preflight

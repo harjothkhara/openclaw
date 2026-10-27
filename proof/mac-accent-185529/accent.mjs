@@ -30,6 +30,7 @@ import {
   primedOff,
   primingVerdict,
 } from "./priming.mjs";
+import { createProcessGuard } from "./process-guard.mjs";
 const execute = promisify(execFile),
   here = path.dirname(fileURLToPath(import.meta.url));
 const bounded = async (label, promise, ms) => {
@@ -142,36 +143,27 @@ async function main() {
     canary,
     proofConn,
     monitorTimer,
-    monitorBusy = false;
+    monitorBusy = false,
+    stoppingApp = false;
   let serial = 0,
-    totalBytes = 0,
     providerPosts = 0,
     inferenceRequests = 0,
     disabledSeq = null;
   const deadline = Date.now() + 8 * 60 * 1000;
-  function kill(p, signal = "SIGKILL") {
-    if (!p || p.groupRetired || !p.child.pid) return;
-    try {
-      process.kill(-p.child.pid, signal);
-    } catch (e) {
-      if (e.code !== "ESRCH") throw e;
-      p.groupRetired = true;
-    }
-  }
-  function groupAlive(p) {
-    if (!p.child.pid || p.groupRetired) return false;
-    try {
-      process.kill(-p.child.pid, 0);
-      return true;
-    } catch (e) {
-      if (e.code !== "ESRCH") throw e;
-      p.groupRetired = true;
-      return false;
-    }
-  }
+  const guard = createProcessGuard({
+    onFailure: (e) => {
+      fatal ??= e;
+    },
+    onOverflow: (e) => fail(e),
+  });
+  const kill = guard.signal;
+  const groupAlive = guard.alive;
   function fail(e) {
     fatal ??= e;
-    kill(appProc);
+    if (appProc && !stoppingApp) {
+      stoppingApp = true;
+      kill(appProc);
+    }
   }
   function start(label, argv, env = baseEnv, capture = false) {
     assert(processes.length < 600, "Process budget");
@@ -210,13 +202,7 @@ async function main() {
     });
     for (const key of ["stdout", "stderr"])
       child[key].on("data", (b) => {
-        totalBytes += b.length;
-        p.bytes += b.length;
-        if (p.bytes > 8 * 1024 * 1024 || totalBytes > 64 * 1024 * 1024) {
-          fail(Error("Log budget exceeded"));
-          kill(p);
-          return;
-        }
+        if (!guard.account(p, b.length)) return;
         if (!log.write(b)) {
           child[key].pause();
           log.once("drain", () => child[key].resume());
@@ -402,7 +388,9 @@ async function main() {
     report.driverSha256 = await hash(fileURLToPath(import.meta.url));
     report.captureHelperSha256 = await hash(path.join(here, "window.swift"));
     await run("codesign", ["/usr/bin/codesign", "--verify", "--deep", "--strict", app]);
-    await run("gui", ["/bin/launchctl", "print", "gui/" + process.getuid()]);
+    // The capture helper's AX and Screen Recording preflight below checks the GUI
+    // needed by this proof. Dumping the whole launchd GUI domain can exceed the
+    // bounded child log budget without testing additional app behavior.
     report.captureHelperExecutableSha256 = await hash(helper); // Reuse exact workflow-preflight binary/path.
     const fixtures = JSON.parse(
       await run(
@@ -1025,17 +1013,41 @@ async function main() {
         errors.push(String(e));
       }
     }
+    errors.push(
+      ...guard.signalErrors.map(
+        (item) => `${item.label} ${item.operation} ${item.signal}: ${item.code}`,
+      ),
+    );
     report.cleanup = errors.length ? "failed" : "owned-process-groups-retired";
     report.cleanupErrors = errors;
+    report.outputOverflows = processes.flatMap((p) => (p.outputOverflow ? [p.outputOverflow] : []));
     report.providerPosts = providerPosts;
     report.inferenceRequests = inferenceRequests;
     if (errors.length || fatal || providerPosts || inferenceRequests) {
       report.status = "incomplete";
       report.guard = fatal ? redact(String(fatal)) : null;
     }
-    await save("rpc.json", records);
-    await save("commands.json", commands);
-    await save("memory.json", metrics);
+    report.processes = processes.map((p) => ({
+      label: p.label,
+      failed: p.failed,
+      closed: p.closed,
+      groupRetired: p.groupRetired,
+      bytes: p.bytes,
+      result: p.result,
+    }));
+    // Preserve a fail-closed receipt before optional logs or manifests can fail.
+    await save("verdict.json", { ...report, status: "incomplete", evidenceFinalized: false });
+    const evidenceErrors = [];
+    const saveAncillary = async (name, value) => {
+      try {
+        await save(name, value);
+      } catch (e) {
+        evidenceErrors.push(`${name}: ${redact(String(e))}`);
+      }
+    };
+    await saveAncillary("rpc.json", records);
+    await saveAncillary("commands.json", commands);
+    await saveAncillary("memory.json", metrics);
     for (const p of processes)
       if (
         p.failed ||
@@ -1048,19 +1060,31 @@ async function main() {
           "tcc",
           "pixel-negative-controls",
         ].includes(p.label)
-      )
-        await save(path.basename(p.file), await fs.readFile(p.file, "utf8"));
-    report.processes = processes.map((p) => ({
-      label: p.label,
-      failed: p.failed,
-      closed: p.closed,
-      groupRetired: p.groupRetired,
-      result: p.result,
-    }));
+      ) {
+        // A truncated private log could contain only a token prefix; export its
+        // bounded byte receipt instead of any of that child's retained output.
+        if (p.outputOverflow) continue;
+        try {
+          await saveAncillary(path.basename(p.file), await fs.readFile(p.file, "utf8"));
+        } catch (e) {
+          evidenceErrors.push(`${p.label} log: ${redact(String(e))}`);
+        }
+      }
+    report.omittedOverflowLogs = report.outputOverflows.map((p) => p.label);
+    report.evidenceErrors = evidenceErrors;
+    if (evidenceErrors.length) report.status = "incomplete";
+    report.evidenceFinalized = evidenceErrors.length === 0;
     await save("verdict.json", report);
-    const manifest = {};
-    for (const n of await fs.readdir(evidence)) manifest[n] = await hash(path.join(evidence, n));
-    await save("SHA256.json", manifest);
+    try {
+      const manifest = {};
+      for (const n of await fs.readdir(evidence)) manifest[n] = await hash(path.join(evidence, n));
+      await save("SHA256.json", manifest);
+    } catch (e) {
+      report.status = "incomplete";
+      report.evidenceFinalized = false;
+      report.evidenceErrors.push(`manifest: ${redact(String(e))}`);
+      await save("verdict.json", report);
+    }
     // Do not publish private state or tokens. Leave only unique-profile residue on this disposable VM.
     if (!errors.length) await fs.rm(priv, { recursive: true, force: true });
     console.log(JSON.stringify({ mode, status: report.status, cleanup: report.cleanup, evidence }));
