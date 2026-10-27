@@ -25,6 +25,17 @@ struct GatewayUserPreferencesTests {
         #expect(GatewayUserPreferences.normalizedAccentHex(value) == nil)
     }
 
+    @Test func `gateway preference precedes operator color and theme restores the default`() {
+        #expect(GatewayUserPreferences.gatewayAccentHex(
+            preference: "#A1B2C3", seamColor: "#0055dd") == "#a1b2c3")
+        #expect(GatewayUserPreferences.gatewayAccentHex(
+            preference: "theme", seamColor: "#0055dd") == nil)
+        #expect(GatewayUserPreferences.gatewayAccentHex(
+            preference: "invalid", seamColor: "#0055dd") == "#0055dd")
+        #expect(GatewayUserPreferences.gatewayAccentHex(
+            preference: nil, seamColor: "#0055dd") == "#0055dd")
+    }
+
     @Test func `profile accent reads its entry without rejecting unrelated fields`() throws {
         let response = Data(##"{"status":"ok","entries":{"ui.accent":"#A1B2C3","ui.theme":"dark"},"extra":true}"##.utf8)
 

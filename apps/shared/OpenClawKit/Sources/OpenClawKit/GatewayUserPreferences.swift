@@ -9,6 +9,12 @@ public enum GatewayUserPreferences {
         return "#\(hex)"
     }
 
+    /// A saved "theme" preference suppresses the operator color even though it has no hex value.
+    public static func gatewayAccentHex(preference: String?, seamColor: String?) -> String? {
+        if preference == "theme" { return nil }
+        return self.normalizedAccentHex(preference) ?? self.normalizedAccentHex(seamColor)
+    }
+
     /// Only an available profile preference may override the caller's Gateway accent.
     public static func decodeProfileAccentHex(_ data: Data) throws -> String? {
         guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],

@@ -194,12 +194,12 @@ extension GatewayConnectionControlTests {
             ])))
     }
 
-    @Test @MainActor
-    func `chat-only connection refreshes Gateway accent after config changes`() async throws {
+    @Test(arguments: [true, false]) @MainActor
+    func `chat-only connection refreshes saved Gateway accent without overriding a profile`(profileless: Bool) async throws {
         try await TestIsolation.withIsolatedState {
             let source = GatewayConnectionEndpointSource(endpoint: GatewayConnection.EndpointSnapshot(
                 config: (URL(string: "ws://127.0.0.1:49229")!, nil, nil), routeAuthority: nil, revision: 1))
-            let accent = LockIsolated("#aa0000")
+            let accent = LockIsolated<String?>("#aa0000")
             let session = GatewayTestWebSocketSession(taskFactory: {
                 GatewayTestWebSocketTask(sendHook: { socket, message, sendIndex in
                     guard sendIndex > 0, let id = GatewayWebSocketTestSupport.requestID(from: message),
@@ -209,15 +209,23 @@ extension GatewayConnectionControlTests {
                     let response: Data
                     switch frame["method"] as? String {
                     case "config.get":
+                        let saved = accent.value.map { "\"\($0)\"" } ?? "null"
                         response = Data("""
                         {"type":"res","id":"\(id)","ok":true,
-                        "payload":{"config":{"ui":{"seamColor":"\(accent.value)"}}}}
+                        "payload":{"config":{"ui":{"seamColor":"#0055dd","prefs":{"accent":\(saved)}}}}}
                         """.utf8)
                     case "users.prefs.get":
-                        response = Data("""
-                        {"type":"res","id":"\(id)","ok":true,
-                        "payload":{"status":"no_durable_identity"}}
-                        """.utf8)
+                        if profileless {
+                            response = Data("""
+                            {"type":"res","id":"\(id)","ok":true,
+                            "payload":{"status":"no_durable_identity"}}
+                            """.utf8)
+                        } else {
+                            response = Data("""
+                            {"type":"res","id":"\(id)","ok":true,
+                            "payload":{"status":"ok","entries":{"ui.accent":"#123456"}}}
+                            """.utf8)
+                        }
                     default:
                         response = GatewayWebSocketTestSupport.okResponseData(id: id)
                     }
@@ -239,12 +247,29 @@ extension GatewayConnectionControlTests {
             state.seamColorHex = nil
             state.profileAccentHex = nil
             _ = try await connection.request(method: "health", params: nil, retryTransportFailures: false)
-            try await TestWait.observed("initial chat accent") { state.effectiveAccentHex == "#aa0000" }
+            try await TestWait.observed("initial saved Gateway accent") { state.seamColorHex == "#aa0000" }
+            try await TestWait.observed("profile accent") {
+                state.profileAccentHex == (profileless ? nil : "#123456")
+            }
+            #expect(state.effectiveAccentHex == (profileless ? "#aa0000" : "#123456"))
 
             accent.withValue { $0 = "#00bb00" }
             await connection._test_handlePush(
                 .event(EventFrame(type: "event", event: "config.changed")), socketGeneration: 1)
-            try await TestWait.observed("changed chat accent") { state.effectiveAccentHex == "#00bb00" }
+            try await TestWait.observed("changed saved Gateway accent") { state.seamColorHex == "#00bb00" }
+            #expect(state.effectiveAccentHex == (profileless ? "#00bb00" : "#123456"))
+
+            accent.withValue { $0 = nil }
+            await connection._test_handlePush(
+                .event(EventFrame(type: "event", event: "config.changed")), socketGeneration: 1)
+            try await TestWait.observed("operator fallback") { state.seamColorHex == "#0055dd" }
+            #expect(state.effectiveAccentHex == (profileless ? "#0055dd" : "#123456"))
+
+            accent.withValue { $0 = "theme" }
+            await connection._test_handlePush(
+                .event(EventFrame(type: "event", event: "config.changed")), socketGeneration: 1)
+            try await TestWait.observed("theme default") { state.seamColorHex == nil }
+            #expect(state.effectiveAccentHex == (profileless ? nil : "#123456"))
             await control.disconnect()
         }
     }
@@ -269,7 +294,7 @@ extension GatewayConnectionControlTests {
                         if deferred { await gate.suspend() }
                         socket.emitReceiveSuccess(.data(Data("""
                         {"type":"res","id":"\(id)","ok":true,
-                        "payload":{"config":{"ui":{"seamColor":"#aa0000"}}}}
+                        "payload":{"config":{"ui":{"seamColor":"#0055dd","prefs":{"accent":"#aa0000"}}}}}
                         """.utf8)))
                         if deferred {
                             replied.withValue { $0 = true }

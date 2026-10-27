@@ -725,9 +725,12 @@ final class ControlChannel {
                     method: "config.get", params: nil, timeoutMs: 8000,
                     ifCurrentServerLease: delivery.serverLease)
                 let snapshot = try JSONDecoder().decode(ConfigSnapshot.self, from: data)
-                let raw = snapshot.config?["ui"]?.dictionaryValue?["seamColor"]?.stringValue
+                let ui = snapshot.config?["ui"]?.dictionaryValue
+                let preference = ui?["prefs"]?.dictionaryValue?["accent"]?.stringValue
+                let seamColor = ui?["seamColor"]?.stringValue
                 guard !Task.isCancelled, delivery.isCurrent else { return }
-                AppStateStore.shared.seamColorHex = GatewayUserPreferences.normalizedAccentHex(raw)
+                AppStateStore.shared.seamColorHex = GatewayUserPreferences.gatewayAccentHex(
+                    preference: preference, seamColor: seamColor)
             } catch {
                 // Keep the last known accent when this Gateway cannot provide a current config.
             }
