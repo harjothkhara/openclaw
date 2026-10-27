@@ -48,7 +48,7 @@ jobs:
                 const jobs = (await github.rest.actions.listJobsForWorkflowRun({...repo,run_id:run.id,per_page:100})).data;
                 if (jobs.total_count > 100) throw Error('Cannot rule out another Mac allocation: '+run.id);
                 if (!jobs.jobs.length) {
-                  if (run.event === 'schedule' && Date.now() - Date.parse(run.created_at) > 24*60*60*1000) continue;
+                  if (run.event === 'schedule') continue; // No job means no current Mac allocation.
                   throw Error('Cannot rule out another Mac allocation: '+run.id);
                 }
                 if (jobs.jobs.some(j => j.status !== 'completed' && (!j.labels.length || j.labels.some(l=>/macos|mac-/i.test(l))))) throw Error('Other possible Mac job active: '+run.id);
