@@ -5,7 +5,7 @@ on:
   workflow_dispatch:
     inputs:
       live_attempt:
-        description: Codex ledger slot (maximum two new attempts; failed setup counts)
+        description: Codex live-app slot (maximum two Mac jobs; admission-only failure does not count)
         required: true
         type: choice
         options: ["1", "2"]
@@ -46,12 +46,24 @@ jobs:
               for (const run of page.workflow_runs) {
                 if (run.id === context.runId) continue;
                 const jobs = (await github.rest.actions.listJobsForWorkflowRun({...repo,run_id:run.id,per_page:100})).data;
-                if (!jobs.jobs.length || jobs.total_count > 100) throw Error('Cannot rule out another Mac allocation: '+run.id);
+                if (jobs.total_count > 100) throw Error('Cannot rule out another Mac allocation: '+run.id);
+                if (!jobs.jobs.length) {
+                  if (run.event === 'schedule' && Date.now() - Date.parse(run.created_at) > 24*60*60*1000) continue;
+                  throw Error('Cannot rule out another Mac allocation: '+run.id);
+                }
                 if (jobs.jobs.some(j => j.status !== 'completed' && (!j.labels.length || j.labels.some(l=>/macos|mac-/i.test(l))))) throw Error('Other possible Mac job active: '+run.id);
               }
             }
             const history = (await github.rest.actions.listWorkflowRuns({...repo,workflow_id:current.workflow_id,branch:'proof/mac-accent-128922-2026-10-27',event:'workflow_dispatch',created:'>=2026-10-27T20:49:00Z',per_page:100})).data;
-            if (history.total_count > 2 || history.total_count !== Number(context.payload.inputs.live_attempt)) throw Error('Two-attempt workflow budget/ledger mismatch');
+            if (history.total_count > 10) throw Error('Proof dispatch history query incomplete');
+            let liveAttempts = 0;
+            for (const run of history.workflow_runs) {
+              if (run.id === context.runId) continue;
+              const jobs = (await github.rest.actions.listJobsForWorkflowRun({...repo,run_id:run.id,per_page:100})).data;
+              if (jobs.total_count > 100) throw Error('Proof job history query incomplete');
+              if (jobs.jobs.some(j => j.name === 'accent' && j.conclusion !== 'skipped')) liveAttempts++;
+            }
+            if (liveAttempts >= 2 || liveAttempts + 1 !== Number(context.payload.inputs.live_attempt)) throw Error('Two live-app attempt budget/ledger mismatch');
             const pr = (await github.rest.pulls.get({owner:'openclaw',repo:'openclaw',pull_number:185529})).data;
             if (pr.head.sha !== 'b34033c907786da68f99e5006d0feb2bf8793b7f' || !pr.draft) throw Error('Pinned draft PR changed');
   accent:
