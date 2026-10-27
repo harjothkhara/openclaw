@@ -40,6 +40,11 @@ function run(args) {
     areas[areas.length - 1].value = "Accent proof draft; do not send";
   }
   var nodes = descendants(window, 0, { left: 5000 });
+  var sendButtons = nodes.filter(function (node) {
+    return (
+      attr(node, "AXIdentifier") === "chat-send-message" && attr(node, "AXRole") === "AXButton"
+    );
+  });
   var content = nodes
     .map(function (node) {
       return [attr(node, "AXTitle"), attr(node, "AXDescription"), attr(node, "AXValue")]
@@ -52,6 +57,7 @@ function run(args) {
   return JSON.stringify({
     title: attr(window, "AXTitle"),
     draftVisible: content.indexOf("Accent proof draft") >= 0,
+    sendEnabled: sendButtons.length === 1 && attr(sendButtons[0], "AXEnabled") === true,
     nodes: nodes.length,
   });
 }

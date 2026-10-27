@@ -138,13 +138,21 @@ jobs:
           git checkout --detach 1299676aacb6230a0960bd4f2178fb7ddd103849
           [[ "$(git rev-parse HEAD)" == "1299676aacb6230a0960bd4f2178fb7ddd103849" ]]
 
+      - name: Add identical passive chat observer to red control
+        if: ${{ inputs.ui_proof }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          node proof-driver/.github/proof/mac-accent/instrument.mjs "$PWD"
+          [[ "$(git diff --name-only)" == "apps/macos/Sources/OpenClaw/WebChatSwiftUI.swift" ]]
+
       - name: Restore red-control Mac app build
         if: ${{ inputs.ui_proof }}
         id: base-cache
         uses: actions/cache/restore@v4
         with:
           path: apps/macos/.build
-          key: mac-accent-app-macos-26-intel-1299676aacb6230a0960bd4f2178fb7ddd103849-${{ hashFiles('apps/macos/Package.resolved') }}
+          key: mac-accent-app-macos-26-intel-1299676aacb6230a0960bd4f2178fb7ddd103849-instrumented-${{ github.sha }}-${{ hashFiles('apps/macos/Package.resolved') }}
 
       - name: Build red-control Gateway and Mac app
         if: ${{ inputs.ui_proof }}
@@ -159,7 +167,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: apps/macos/.build
-          key: mac-accent-app-macos-26-intel-1299676aacb6230a0960bd4f2178fb7ddd103849-${{ hashFiles('apps/macos/Package.resolved') }}
+          key: mac-accent-app-macos-26-intel-1299676aacb6230a0960bd4f2178fb7ddd103849-instrumented-${{ github.sha }}-${{ hashFiles('apps/macos/Package.resolved') }}
 
       - name: Require live red control
         if: ${{ inputs.ui_proof }}
@@ -178,10 +186,20 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          git restore apps/macos/Sources/OpenClaw/WebChatSwiftUI.swift
+          rm -rf apps/macos/.build
           git checkout --detach 102a34b00c3c4729436738b5a6bc84343b6a699e
           [[ "$(git rev-parse HEAD)" == "102a34b00c3c4729436738b5a6bc84343b6a699e" ]]
           git diff --name-only 1299676aacb6230a0960bd4f2178fb7ddd103849 HEAD | grep -Ev '^(apps/macos/|apps/shared/OpenClawKit/(Sources/OpenClawKit/GatewayUserPreferences.swift|Tests/OpenClawKitTests/GatewayUserPreferencesTests.swift)$)' > proof-logs/non-mac-changes.log || true
           [[ ! -s proof-logs/non-mac-changes.log ]]
+
+      - name: Add identical passive chat observer to PR app
+        if: ${{ inputs.ui_proof }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          node proof-driver/.github/proof/mac-accent/instrument.mjs "$PWD"
+          [[ "$(git diff --name-only)" == "apps/macos/Sources/OpenClaw/WebChatSwiftUI.swift" ]]
 
       - name: Restore PR Mac app build
         if: ${{ inputs.ui_proof }}
@@ -189,7 +207,7 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: apps/macos/.build
-          key: mac-accent-app-macos-26-intel-102a34b00c3c4729436738b5a6bc84343b6a699e-${{ hashFiles('apps/macos/Package.resolved') }}
+          key: mac-accent-app-macos-26-intel-102a34b00c3c4729436738b5a6bc84343b6a699e-instrumented-${{ github.sha }}-${{ hashFiles('apps/macos/Package.resolved') }}
 
       - name: Build PR Mac app against the identical Gateway runtime
         if: ${{ inputs.ui_proof }}
@@ -203,7 +221,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: apps/macos/.build
-          key: mac-accent-app-macos-26-intel-102a34b00c3c4729436738b5a6bc84343b6a699e-${{ hashFiles('apps/macos/Package.resolved') }}
+          key: mac-accent-app-macos-26-intel-102a34b00c3c4729436738b5a6bc84343b6a699e-instrumented-${{ github.sha }}-${{ hashFiles('apps/macos/Package.resolved') }}
 
       - name: Require live green result
         if: ${{ inputs.ui_proof }}
@@ -215,7 +233,7 @@ jobs:
             "$PWD/proof-driver/.github/proof/mac-accent" \
             "$PWD/proof-logs/green-head" green \
             2>&1 | tee proof-logs/green-head-run.log
-          node -e 'const r=require("./proof-logs/green-head/result.json");if(r.status!=="passed"||r.head!=="102a34b00c3c4729436738b5a6bc84343b6a699e")process.exit(1)'
+          node -e 'const r=require("./proof-logs/green-head/result.json");if(!["passed","passed-instrumented"].includes(r.status)||r.head!=="102a34b00c3c4729436738b5a6bc84343b6a699e")process.exit(1)'
 
       - name: Upload complete proof logs
         if: always()

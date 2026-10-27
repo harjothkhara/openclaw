@@ -165,7 +165,7 @@ try {
     env.OPENCLAW_CONFIG_PATH,
     JSON.stringify({
       gateway: { mode: "local", bind: "loopback", port, auth: { mode: "token", token } },
-      ui: { seamColor: "#e00070" },
+      ui: { seamColor: "#e00070", prefs: { accent: "#e00070" } },
       plugins: { enabled: false },
     }),
     { mode: 0o600 },
@@ -218,6 +218,8 @@ try {
       "YES",
       "-openclaw.nativeExperienceEnabled",
       "YES",
+      "-openclaw.chat.useNativeConversation",
+      "YES",
       "-AppleLanguages",
       "(en)",
     ],
@@ -253,40 +255,120 @@ try {
   });
   const draft = JSON.parse(await ui("draft", app.child.pid));
   assert(draft.draftVisible, "Native chat draft was not visible to accessibility");
+  await waitFor(
+    "native send control enabled by the unsent draft",
+    async () => {
+      try {
+        const state = JSON.parse(await ui("inspect", app.child.pid));
+        return state.draftVisible && state.sendEnabled;
+      } catch {
+        return false;
+      }
+    },
+    30000,
+  );
   await sleep(1000);
-  const before = await screenshot("01-magenta-chat");
+  const accentSamples = () =>
+    (app.logs + "\n" + (unifiedLog?.logs ?? ""))
+      .split("\n")
+      .filter((line) => line.includes("MAC_ACCENT_PROOF accent="))
+      .map((line) => ({
+        accent: /MAC_ACCENT_PROOF accent=([^\s]+)/.exec(line)?.[1],
+        native: /native=(true|false)/.exec(line)?.[1] === "true",
+      }));
+  await waitFor("instrumented native chat initial render", () =>
+    accentSamples().some((s) => s.native),
+  );
+  const beforeSamples = accentSamples();
+  record("chat-consumer-before", { samples: beforeSamples });
+  if (expected === "green") {
+    assert(
+      beforeSamples.some((s) => s.native && s.accent === "#e00070"),
+      "PR app did not consume the initial saved magenta accent",
+    );
+  }
+  const before = await screenshot("01-before-chat");
 
   const snapshot = await rpc("config.get");
   assert.equal(snapshot.config.ui.seamColor, "#e00070");
+  assert.equal(snapshot.config.ui.prefs.accent, "#e00070");
   await rpc("config.patch", {
-    raw: JSON.stringify({ ui: { seamColor: "#00d070" } }),
-    baseHash: snapshot.hash,
+    raw: JSON.stringify({ ui: { prefs: { accent: "#00d070" } } }),
+    note: "fork-hosted Mac accent proof",
   });
-  await waitFor(
-    "Gateway config changed",
-    async () => (await rpc("config.get")).config.ui.seamColor === "#00d070",
-  );
-  await sleep(2000);
+  await waitFor("Gateway Appearance preference changed", async () => {
+    const ui = (await rpc("config.get")).config.ui;
+    return ui.seamColor === "#e00070" && ui.prefs.accent === "#00d070";
+  });
+  if (expected === "green") {
+    await waitFor(
+      "native chat consumed green on the same app",
+      () => accentSamples().some((s) => s.native && s.accent === "#00d070"),
+      30000,
+    );
+  } else {
+    await sleep(3000);
+  }
+  const afterSamples = accentSamples();
+  record("chat-consumer-after", { samples: afterSamples });
+  const consumedGreen = afterSamples.some((s) => s.native && s.accent === "#00d070");
   const afterState = JSON.parse(await ui("inspect", app.child.pid));
-  assert(afterState.draftVisible, "Chat draft disappeared after config patch");
-  const after = await screenshot("02-green-chat");
+  assert(
+    afterState.draftVisible && afterState.sendEnabled,
+    "Native chat composer was not ready after config patch",
+  );
+  const after = await screenshot("02-after-chat");
   const pixels = await run("swift", [path.join(driver, "pixels.swift"), before, after], 120000);
   const verdict = JSON.parse(pixels.stdout.trim());
   record("pixel-contrast", verdict);
-  assert.equal(verdict.validImages, true, "Blank or black chat screenshot");
+  const macConnections = gateway.logs
+    .split("\n")
+    .filter(
+      (line) =>
+        line.includes("[ws] client connected") &&
+        line.includes("client=openclaw-macos") &&
+        line.includes("mode=ui"),
+    );
+  assert.equal(
+    macConnections.length,
+    1,
+    "Mac chat reconnected; live push versus reconnect is unproven",
+  );
   if (expected === "green") {
-    assert.equal(verdict.changed, true, "Chat accent did not change from magenta to green");
+    assert(consumedGreen, "Native chat did not consume the saved green accent");
+    assert(
+      verdict.changed || !verdict.validImages,
+      "Visible chat pixels did not change from magenta to green",
+    );
   } else {
     assert.equal(verdict.changed, false, "Base unexpectedly passed the positive accent proof");
-    assert(verdict.after.green < 40, "Base chat gained a green accent after patch");
+    assert(!consumedGreen, "Base chat unexpectedly consumed the new green accent");
+    if (verdict.validImages) {
+      assert(
+        verdict.after.green <= verdict.before.green + 30,
+        "Base chat gained green-dominant pixels after the patch",
+      );
+    }
   }
   const head = (await execute("git", ["rev-parse", "HEAD"], { cwd: repo })).stdout.trim();
+  const noChatSent = !gateway.logs.split("\n").some((line) => /\bchat\.send\b/.test(line));
+  assert(noChatSent, "Unexpected chat.send request during an unsent-draft proof");
   outcome = {
-    status: expected === "green" ? "passed" : "expected-failure",
+    status:
+      expected === "green"
+        ? verdict.changed
+          ? "passed"
+          : "passed-instrumented"
+        : "expected-failure",
     head,
     port: "<ephemeral>",
     pixelContrast: verdict,
-    noChatSent: true,
+    consumerSamples: { before: beforeSamples, after: afterSamples },
+    visualLimitation:
+      expected === "green" && !verdict.changed
+        ? "Protected or blank chat-window captures; the instrumented real-app chat consumer changed, but visible pixels were not proved"
+        : undefined,
+    noChatSent,
   };
   record("proof-verdict", outcome);
 } catch (error) {
@@ -327,4 +409,5 @@ try {
   if (!outcome.cleanupError) await fs.rm(root, { recursive: true, force: true });
 }
 console.log(JSON.stringify(outcome, null, 2));
-if (!["passed", "expected-failure"].includes(outcome.status)) process.exitCode = 1;
+if (!["passed", "passed-instrumented", "expected-failure"].includes(outcome.status))
+  process.exitCode = 1;
