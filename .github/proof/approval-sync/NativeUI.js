@@ -1,0 +1,137 @@
+// Proof-only external System Events UI observer. Never loaded into OpenClaw.
+// Run through the hosted image's pregranted /usr/bin/osascript, not a new AX binary.
+ObjC.import("Foundation");
+var systemEvents = Application("System Events");
+var markers = ["active", "blocker", "queued", "sentinel"].map(function (name) {
+  return "approval-proof-" + name;
+});
+
+function emit(value) {
+  var data = $(JSON.stringify(value) + "\n").dataUsingEncoding($.NSUTF8StringEncoding);
+  $.NSFileHandle.fileHandleWithStandardOutput.writeData(data);
+}
+
+function attribute(element, name) {
+  try {
+    return element.attributes.byName(name).value();
+  } catch (_) {
+    return null;
+  }
+}
+
+function descendants(element, depth, budget) {
+  if (depth >= 24 || budget.left <= 0) return [];
+  budget.left -= 1;
+  var result = [element];
+  var children;
+  try {
+    children = element.uiElements();
+  } catch (_) {
+    return result;
+  }
+  children.forEach(function (child) {
+    result = result.concat(descendants(child, depth + 1, budget));
+  });
+  return result;
+}
+
+function text(nodes) {
+  var values = [];
+  nodes.forEach(function (node) {
+    ["AXTitle", "AXDescription", "AXValue"].forEach(function (name) {
+      var value = attribute(node, name);
+      if (typeof value === "string") values.push(value);
+    });
+  });
+  return values;
+}
+
+function snapshot(app) {
+  // An inaccessible AXWindows request is an error, never evidence of no panel.
+  var windows = app.windows();
+  var visible = [];
+  var approvals = 0;
+  windows.forEach(function (window) {
+    if (attribute(window, "AXTitle") === "OpenClaw Command Approval") approvals += 1;
+    var content = text(descendants(window, 0, { left: 5000 })).join(" ");
+    markers.forEach(function (marker) {
+      if (content.indexOf(marker) >= 0 && visible.indexOf(marker) < 0) {
+        visible.push(marker);
+      }
+    });
+  });
+  return {
+    ts: Date.now(),
+    kind: "native-ui",
+    markers: visible.sort(),
+    approvalWindows: approvals,
+  };
+}
+
+function run(args) {
+  var mode = args[0];
+  if (mode === "preflight") {
+    var finder = systemEvents.applicationProcesses.byName("Finder");
+    if (!finder.exists()) {
+      throw new Error("SETUP BLOCKED: no logged-in Finder GUI session");
+    }
+    finder.windows();
+    return "Existing System Events GUI automation access available";
+  }
+
+  var pid = Number(args[1]);
+  if (!Number.isInteger(pid) || pid <= 0) {
+    throw new Error("Expected watch PID or press PID MARKER BUTTON");
+  }
+  var app = systemEvents.applicationProcesses.whose({ unixId: pid })[0];
+
+  if (mode === "watch") {
+    var last = null;
+    var lastEmission = 0;
+    while (app.exists()) {
+      try {
+        var state = snapshot(app);
+        var key = JSON.stringify([state.markers, state.approvalWindows]);
+        if (key !== last || Date.now() - lastEmission >= 500) {
+          emit(state);
+          last = key;
+          lastEmission = Date.now();
+        }
+      } catch (_) {
+        // Startup or window retirement can briefly invalidate an AX reference.
+        // A persistent denial produces no heartbeat and fails the outer driver.
+      }
+      $.NSThread.sleepForTimeInterval(0.05);
+    }
+    return;
+  }
+
+  if (mode === "press" && args.length === 4) {
+    var marker = args[2];
+    var title = args[3];
+    var matches = [];
+    app.windows().forEach(function (window) {
+      var nodes = descendants(window, 0, { left: 5000 });
+      if (
+        !text(nodes).some(function (value) {
+          return value.indexOf(marker) >= 0;
+        })
+      )
+        return;
+      nodes.forEach(function (node) {
+        if (attribute(node, "AXRole") === "AXButton" && text([node]).indexOf(title) >= 0) {
+          matches.push(node);
+        }
+      });
+    });
+    if (matches.length !== 1) {
+      throw new Error(
+        "Expected one native button on the matching approval, found " + matches.length,
+      );
+    }
+    matches[0].click();
+    return "Pressed native " + title + " for " + marker;
+  }
+
+  throw new Error("Expected preflight, watch PID, or press PID MARKER BUTTON");
+}

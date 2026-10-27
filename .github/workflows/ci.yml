@@ -1,4 +1,5 @@
 name: Mac approval panel proof
+run-name: PR 144685 ${{ inputs.ui_proof && 'UI' || 'tests' }} / ${{ inputs.target_sha }}
 
 on:
   workflow_dispatch:
@@ -8,13 +9,23 @@ on:
         required: true
         type: string
         default: ""
+      ui_proof:
+        description: Run real-app UI proof instead of repeating the unit lane
+        required: true
+        type: boolean
+        default: false
+      expected_workflow_sha:
+        description: Exact inspected proof-workflow commit required for UI mode
+        required: false
+        type: string
+        default: ""
 
 permissions:
   contents: read
 
 jobs:
   approval-panel:
-    if: github.repository == 'harjothkhara/openclaw'
+    if: github.repository == 'harjothkhara/openclaw' && github.ref == 'refs/heads/proof/approval-sync-144685-2026-10-27'
     runs-on: macos-26
     timeout-minutes: 45
     steps:
@@ -28,13 +39,44 @@ jobs:
       - name: Verify exact revision
         env:
           TARGET_SHA: ${{ inputs.target_sha }}
+          UI_PROOF: ${{ inputs.ui_proof }}
+          EXPECTED_WORKFLOW_SHA: ${{ inputs.expected_workflow_sha }}
         shell: bash
         run: |
           set -euo pipefail
+          mkdir -p proof-logs
           [[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]]
           actual="$(git rev-parse HEAD)"
-          printf 'Requested: %s\nChecked out: %s\n' "$TARGET_SHA" "$actual"
           [[ "$actual" == "$TARGET_SHA" ]]
+          if [[ "$UI_PROOF" == "true" ]]; then
+            [[ "$TARGET_SHA" == "31d8a1ba9ae628f206b923390376934d3ab7a4e7" ]]
+            [[ "$EXPECTED_WORKFLOW_SHA" =~ ^[0-9a-f]{40}$ ]]
+            [[ "$GITHUB_SHA" == "$EXPECTED_WORKFLOW_SHA" ]]
+          fi
+          printf 'Requested: %s\nChecked out: %s\nWorkflow: %s\n' "$TARGET_SHA" "$actual" "$GITHUB_SHA" | tee proof-logs/identity.log
+          if [[ "$UI_PROOF" == "true" ]]; then
+            printf 'Reused combined regression run: 40437532767 on %s\n' "$TARGET_SHA" | tee -a proof-logs/identity.log
+          fi
+
+      - name: Check out UI drivers from the inspected workflow commit
+        if: ${{ inputs.ui_proof }}
+        uses: actions/checkout@v4
+        with:
+          repository: harjothkhara/openclaw
+          ref: ${{ github.sha }}
+          path: proof-tools
+          sparse-checkout: .github/proof/approval-sync
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+
+      - name: Preflight existing GUI automation and screen capture access
+        if: ${{ inputs.ui_proof }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          shasum -a 256 proof-tools/.github/proof/approval-sync/NativeUI.js proof-tools/.github/proof/approval-sync/drive.mjs | tee -a proof-logs/identity.log
+          /usr/bin/osascript -l JavaScript proof-tools/.github/proof/approval-sync/NativeUI.js preflight
+          /usr/sbin/screencapture -x "$RUNNER_TEMP/approval-144685-preflight.png"
 
       - name: Set up Node and pnpm
         uses: pnpm/action-setup@v4
@@ -60,12 +102,14 @@ jobs:
           node scripts/prepare-apple-mermaid.mjs 2>&1 | tee proof-logs/assets.log
 
       - name: Build macOS test bundle
+        if: ${{ !inputs.ui_proof }}
         shell: bash
         run: |
           set -euo pipefail
           swift build --package-path apps/macos --build-system native --build-tests 2>&1 | tee proof-logs/build.log
 
       - name: Run combined approval-panel regressions
+        if: ${{ !inputs.ui_proof }}
         shell: bash
         run: |
           set -euo pipefail
@@ -78,6 +122,27 @@ jobs:
           grep -Fq 'Suite ExecApprovalsGatewayPrompterTests passed' proof-logs/approval-tests.log
           grep -Fq 'Suite ExecApprovalPromptLayoutTests passed' proof-logs/approval-tests.log
           grep -Eq 'Test run with [1-9][0-9]* tests in 2 suites passed' proof-logs/approval-tests.log
+
+      - name: Build Gateway and actual app for UI proof
+        if: ${{ inputs.ui_proof }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          pnpm build:runtime 2>&1 | tee proof-logs/gateway-build.log
+          swift build --package-path apps/macos --build-system native --product OpenClaw 2>&1 | tee proof-logs/app-build.log
+          swift build --package-path apps/macos --build-system native --product openclaw-mac 2>&1 | tee proof-logs/status-cli-build.log
+
+      - name: Run real Gateway and native approval UI proof
+        if: ${{ inputs.ui_proof }}
+        timeout-minutes: 10
+        env:
+          TARGET_SHA: ${{ inputs.target_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          node proof-tools/.github/proof/approval-sync/drive.mjs . proof-tools/.github/proof/approval-sync/NativeUI.js proof-logs after 2>&1 | tee proof-logs/ui-driver.log
+          node --input-type=module -e 'import assert from "node:assert/strict"; import {readFileSync} from "node:fs"; const r=JSON.parse(readFileSync("proof-logs/result.json","utf8")); assert.equal(r.head,process.env.TARGET_SHA); assert.equal(r.status,"passed"); for(const key of ["activeDismissal","queuedSuppression","localResolution"]) assert.equal(r.checks[key],true);'
+          printf 'Workflow: %s\n' "$GITHUB_SHA"
 
       - name: Upload complete proof logs
         if: always()
