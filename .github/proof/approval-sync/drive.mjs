@@ -151,7 +151,7 @@ function ensureAlive() {
       throw new Error(entry.name + " exited during proof");
     }
   }
-  if (lastNativeEvent && Date.now() - lastNativeEvent > 3000) {
+  if (lastNativeEvent && Date.now() - lastNativeEvent > 15000) {
     throw new Error("Native observer heartbeat stopped");
   }
 }
@@ -361,7 +361,7 @@ try {
     }
   });
 
-  await waitFor("native observer ready", () => nativeEvents.length > 0);
+  await waitFor("native observer ready", () => nativeEvents.length > 0, 35000);
 
   await waitFor(
     "app connected to the selected real Gateway",

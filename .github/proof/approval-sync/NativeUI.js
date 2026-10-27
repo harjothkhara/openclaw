@@ -12,23 +12,17 @@ function emit(value) {
 }
 
 function attribute(element, name) {
-  try {
-    return element.attributes.byName(name).value();
-  } catch (_) {
-    return null;
-  }
+  var value = element.attributes.byName(name);
+  return value.exists() ? value.value() : null;
 }
 
 function descendants(element, depth, budget) {
-  if (depth >= 24 || budget.left <= 0) return [];
+  if (depth >= 24 || budget.left <= 0) {
+    throw new Error("Incomplete accessibility tree");
+  }
   budget.left -= 1;
   var result = [element];
-  var children;
-  try {
-    children = element.uiElements();
-  } catch (_) {
-    return result;
-  }
+  var children = element.uiElements();
   children.forEach(function (child) {
     result = result.concat(descendants(child, depth + 1, budget));
   });
@@ -52,7 +46,10 @@ function snapshot(app) {
   var visible = [];
   var approvals = 0;
   windows.forEach(function (window) {
-    if (attribute(window, "AXTitle") === "OpenClaw Command Approval") approvals += 1;
+    var title = attribute(window, "AXTitle");
+    if (title === null) throw new Error("Window title unavailable");
+    if (title !== "OpenClaw Command Approval") return;
+    approvals += 1;
     var content = text(descendants(window, 0, { left: 5000 })).join(" ");
     markers.forEach(function (marker) {
       if (content.indexOf(marker) >= 0 && visible.indexOf(marker) < 0) {
@@ -95,6 +92,7 @@ function run(args) {
     }
     var last = null;
     var lastEmission = 0;
+    var lastError = 0;
     while (app.exists()) {
       try {
         var state = snapshot(app);
@@ -104,9 +102,16 @@ function run(args) {
           last = key;
           lastEmission = Date.now();
         }
-      } catch (_) {
-        // Startup or window retirement can briefly invalidate an AX reference.
-        // A persistent denial produces no heartbeat and fails the outer driver.
+      } catch (error) {
+        // An incomplete read must never become evidence that a panel disappeared.
+        // Keep the observer alive and let the parent fail if valid frames stop.
+        if (Date.now() - lastError >= 5000) {
+          var message = $("AX snapshot failed: " + String(error) + "\n").dataUsingEncoding(
+            $.NSUTF8StringEncoding,
+          );
+          $.NSFileHandle.fileHandleWithStandardError.writeData(message);
+          lastError = Date.now();
+        }
       }
       $.NSThread.sleepForTimeInterval(0.05);
     }
