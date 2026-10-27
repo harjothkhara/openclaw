@@ -65,25 +65,19 @@ jobs:
           set -euo pipefail
           swift build --package-path apps/macos --build-system native --build-tests 2>&1 | tee proof-logs/build.log
 
-      - name: Run isolated approval-panel regressions
+      - name: Run combined approval-panel regressions
         shell: bash
         run: |
-          set -uo pipefail
+          set -euo pipefail
           node scripts/test-macos-native.mts default \
             --package-path apps/macos \
             --build-system native \
             --skip-build \
-            --filter ExecApprovalsGatewayPrompterTests 2>&1 | tee proof-logs/prompter-tests.log
-          prompter_status=${PIPESTATUS[0]}
-          node scripts/test-macos-native.mts default \
-            --package-path apps/macos \
-            --build-system native \
-            --skip-build \
-            --filter ExecApprovalPromptLayoutTests 2>&1 | tee proof-logs/layout-tests.log
-          layout_status=${PIPESTATUS[0]}
-          if (( prompter_status != 0 || layout_status != 0 )); then
-            exit 1
-          fi
+            --filter 'ExecApprovalsGatewayPrompterTests|ExecApprovalPromptLayoutTests' \
+            2>&1 | tee proof-logs/approval-tests.log
+          grep -Fq 'Suite ExecApprovalsGatewayPrompterTests passed' proof-logs/approval-tests.log
+          grep -Fq 'Suite ExecApprovalPromptLayoutTests passed' proof-logs/approval-tests.log
+          grep -Eq 'Test run with [1-9][0-9]* tests in 2 suites passed' proof-logs/approval-tests.log
 
       - name: Upload complete proof logs
         if: always()
