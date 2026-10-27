@@ -86,6 +86,13 @@ function run(args) {
   var app = systemEvents.applicationProcesses.whose({ unixId: pid })[0];
 
   if (mode === "watch") {
+    var startupDeadline = Date.now() + 30000;
+    while (!app.exists() && Date.now() < startupDeadline) {
+      $.NSThread.sleepForTimeInterval(0.1);
+    }
+    if (!app.exists()) {
+      throw new Error("Native app process did not appear in System Events");
+    }
     var last = null;
     var lastEmission = 0;
     while (app.exists()) {
