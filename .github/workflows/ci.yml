@@ -29,7 +29,7 @@ jobs:
         with:
           repository: openclaw/openclaw
           ref: ${{ inputs.target_sha }}
-          fetch-depth: 3
+          fetch-depth: 8
           persist-credentials: false
 
       - name: Verify exact revision
