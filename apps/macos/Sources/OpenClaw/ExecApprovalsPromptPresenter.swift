@@ -253,9 +253,5 @@ extension ExecApprovalsPromptPresenter {
             self.pendingPromptWaitersForTesting.removeValue(forKey: id)?.continuation.resume()
         }
     }
-
-    static var pendingPromptCountForTesting: Int {
-        self.pendingPrompts.count
-    }
 }
 #endif
