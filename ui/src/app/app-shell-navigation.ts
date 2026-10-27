@@ -84,7 +84,8 @@ export class ShellNavigationOwner {
     if (!context || !isRouteId(routeId)) {
       return;
     }
-    this.host.closeNavDrawer({ restoreFocus: true });
+    // The new draft owns focus after it mounts; a drawer return must not reclaim it.
+    this.host.closeNavDrawer({ restoreFocus: routeId !== "new-session" });
     context.navigate(
       routeId,
       isSessionRouteId(routeId) ? this.chatNavigationOptions(routeId, options) : options,
@@ -172,7 +173,7 @@ export class ShellNavigationOwner {
     return true;
   }
 
-  recoverDeletedActiveSession(_sessionState: ApplicationContext["sessions"]["state"]): void {
+  recoverDeletedActiveSession(): void {
     const context = this.host.context;
     const routeId = this.host.routeState.routeId;
     const sessionKey = this.host.activeSessionKey.trim();
@@ -268,7 +269,6 @@ export class ShellNavigationOwner {
     }
   }
 
-  /** Agent targeted by the open new-session route, keyed off its ?agent param. */
   newSessionRouteAgentId(): string {
     if (this.host.routeState.routeId !== "new-session") {
       return "";
@@ -292,3 +292,5 @@ export class ShellNavigationOwner {
     this.navigate("chat");
   }
 }
+
+export type ShellNavigationCapability = Pick<ShellNavigationOwner, keyof ShellNavigationOwner>;

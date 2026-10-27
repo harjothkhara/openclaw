@@ -1,5 +1,5 @@
 ---
-summary: "Connect OpenAI with an API key, Codex subscription, or Sign in with ChatGPT"
+summary: "Connect OpenAI with an API key, Codex subscription, or Sign in with ChatGPT (Beta)"
 read_when:
   - You are connecting OpenAI to OpenClaw for the first time
   - You want Codex subscription auth instead of API keys
@@ -121,7 +121,8 @@ choose based on model access, hosted plugins, usage tracking, and permissions.
         openclaw models auth login --provider openai --device-code
         ```
       </Step>
-      <Step title="Use the canonical OpenAI model route">
+      <Step title="Use the standard OpenAI model route">
+        <a id="use-the-canonical-openai-model-route" />
         ```bash
         openclaw config set agents.defaults.model.primary openai/gpt-6-astra
         ```
@@ -355,7 +356,7 @@ choose based on model access, hosted plugins, usage tracking, and permissions.
     `openai/gpt-5.6-sol` configuration. Dense turns reached `295098`, `586562`,
     and `863664` prompt tokens. Turn three emitted and persisted a first-class
     server compaction item; the next request replayed that exact opaque item,
-    pruned its prefix, and used `9602` prompt tokens. A deterministic long
+    pruned its prefix, and used `9602` prompt tokens. A long
     response produced `5480` output tokens, durable markers survived compaction
     and Gateway restart, restart latency was `12081` ms, every call reported
     `serviceTier: priority`, and the full suite took `220.03` seconds. These
@@ -427,11 +428,16 @@ choose based on model access, hosted plugins, usage tracking, and permissions.
 
 <a id="chatgpt-token-sharing-preview" />
 
-## Sign in with ChatGPT (preview)
+<a id="sign-in-with-chatgpt-preview" />
 
-Use Sign in with ChatGPT (SIWC) for app-specific permissions, usage tracking,
-and token limits per OpenClaw instance while eligible Responses API requests use
-your Codex allowance.
+## Sign in with ChatGPT (Beta)
+
+Use Sign in with ChatGPT (SIWC) for app-specific authorization to spend your
+Codex allowance on eligible Responses API requests. Check shared allowance
+usage in [ChatGPT Settings → Usage](https://chatgpt.com/settings/usage). OpenClaw
+does not show SIWC quota or per-app usage, and does not set per-app limits;
+ChatGPT may offer app-specific controls for your account.
+
 Your account and workspace must have SIWC registration and token sharing enabled
 by OpenAI.
 
@@ -483,6 +489,15 @@ workspace** in the sign-in prompt.
 - With the Codex runtime, SIWC requires a managed local process and an isolated
   agent home. Automatic context summarization is supported; manual `/compact`,
   remote execution, and supervised sessions are unavailable with this credential.
+
+OpenClaw discovers SIWC model choices from the selected account through
+`GET https://api.openai.com/v1/models`, using the same profile's access token as
+inference. Only models marked for display are offered, with their account-specific
+names and order. Switching profiles uses that profile's catalog. A successful
+empty list stays empty; a rejected credential does not fall back to static model
+access. If discovery is temporarily unavailable, OpenClaw retains static hints
+and marks discovery unavailable. Codex app-server's bundled or cached model list
+is not proof of current SIWC account access.
 
 Model and allowance eligibility are enforced by OpenAI. SIWC does not import
 ChatGPT conversations or Codex history.

@@ -1,8 +1,3 @@
-/**
- * Manifest capability availability checks.
- *
- * Combines plugin contracts, availability, config signals, auth profiles, env candidates, and base URL guards.
- */
 import type { OpenClawConfig } from "../../config/types.openclaw.js";
 import { normalizePluginsConfig } from "../../plugins/config-state.js";
 import { getCurrentPluginMetadataSnapshot } from "../../plugins/current-plugin-metadata-snapshot.js";
@@ -26,66 +21,20 @@ import {
   resolveProviderEntryApiKeyProfileReference,
 } from "../model-auth-provider-config.js";
 
-/** Manifest contract keys that represent provider-backed tool capabilities. */
-type CapabilityContractKey =
-  | "imageGenerationProviders"
-  | "videoGenerationProviders"
-  | "musicGenerationProviders"
-  | "mediaUnderstandingProviders";
-
-type CapabilityProviderMetadataKey =
-  | "imageGenerationProviderMetadata"
-  | "videoGenerationProviderMetadata"
-  | "musicGenerationProviderMetadata";
-
 type CapabilityMetadataSnapshot = Pick<PluginMetadataSnapshot, "index" | "plugins">;
 
-const GENERATION_AUTH_CAPABILITIES = {
-  imageGenerationProviders: "image-generation",
-  videoGenerationProviders: "video-generation",
-  musicGenerationProviders: "music-generation",
+const CAPABILITY_METADATA = {
+  imageGenerationProviders: ["imageGenerationProviderMetadata", "image-generation"],
+  videoGenerationProviders: ["videoGenerationProviderMetadata", "video-generation"],
+  musicGenerationProviders: ["musicGenerationProviderMetadata", "music-generation"],
+  // Media understanding has separate image-input and transcription operations.
+  mediaUnderstandingProviders: [undefined, undefined],
 } as const;
 
+type CapabilityContractKey = keyof typeof CAPABILITY_METADATA;
+
 export function capabilityAuthOperation(key: CapabilityContractKey): string | undefined {
-  // Media understanding has separate image-input and transcription operations.
-  return key === "mediaUnderstandingProviders" ? undefined : GENERATION_AUTH_CAPABILITIES[key];
-}
-
-function metadataKeyForCapabilityContract(
-  key: CapabilityContractKey,
-): CapabilityProviderMetadataKey | undefined {
-  switch (key) {
-    case "imageGenerationProviders":
-      return "imageGenerationProviderMetadata";
-    case "videoGenerationProviders":
-      return "videoGenerationProviderMetadata";
-    case "musicGenerationProviders":
-      return "musicGenerationProviderMetadata";
-    case "mediaUnderstandingProviders":
-      return undefined;
-  }
-  return undefined;
-}
-
-function listCapabilityAuthSignals(params: {
-  plugin: PluginManifestRecord;
-  key: CapabilityContractKey;
-  providerId: string;
-}): Array<{
-  provider: string;
-  providerBaseUrl?: NonNullable<
-    NonNullable<PluginManifestRecord["imageGenerationProviderMetadata"]>[string]["authSignals"]
-  >[number]["providerBaseUrl"];
-}> {
-  const metadataKey = metadataKeyForCapabilityContract(params.key);
-  const metadata = metadataKey ? params.plugin[metadataKey]?.[params.providerId] : undefined;
-  if (metadata?.authSignals?.length) {
-    return metadata.authSignals;
-  }
-  // Older manifests only declare provider ids; derive auth signals from aliases/providers.
-  return [params.providerId, ...(metadata?.aliases ?? []), ...(metadata?.authProviders ?? [])].map(
-    (provider) => ({ provider }),
-  );
+  return CAPABILITY_METADATA[key][1];
 }
 
 function hasAvailableCapabilityPlugin(
@@ -122,7 +71,7 @@ function hasConfiguredCapabilityProviderSignal(params: {
   config?: OpenClawConfig;
   authStore?: AuthProfileStore;
 }): boolean {
-  const metadataKey = metadataKeyForCapabilityContract(params.key);
+  const [metadataKey] = CAPABILITY_METADATA[params.key];
   const metadata = metadataKey ? params.plugin[metadataKey]?.[params.providerId] : undefined;
   if (
     metadata?.configSignals?.some((signal) =>
@@ -135,11 +84,13 @@ function hasConfiguredCapabilityProviderSignal(params: {
   ) {
     return true;
   }
-  for (const signal of listCapabilityAuthSignals({
-    plugin: params.plugin,
-    key: params.key,
-    providerId: params.providerId,
-  })) {
+  // Older manifests only declare provider ids; derive auth signals from aliases/providers.
+  const authSignals = metadata?.authSignals?.length
+    ? metadata.authSignals
+    : [params.providerId, ...(metadata?.aliases ?? []), ...(metadata?.authProviders ?? [])].map(
+        (provider) => ({ provider, providerBaseUrl: undefined }),
+      );
+  for (const signal of authSignals) {
     if (
       !manifestProviderBaseUrlGuardPasses({
         config: params.config,
@@ -228,7 +179,6 @@ export function loadCapabilityMetadataSnapshot(params: {
   });
 }
 
-/** Checks whether any available plugin has a configured provider for a capability contract. */
 export function hasSnapshotCapabilityAvailability(params: {
   snapshot: CapabilityMetadataSnapshot;
   key: CapabilityContractKey;
@@ -237,18 +187,11 @@ export function hasSnapshotCapabilityAvailability(params: {
 }): boolean {
   return hasAvailableCapabilityPlugin(params, (plugin) =>
     (plugin.contracts?.[params.key] ?? []).some((providerId) =>
-      hasConfiguredCapabilityProviderSignal({
-        plugin,
-        key: params.key,
-        providerId,
-        config: params.config,
-        authStore: params.authStore,
-      }),
+      hasConfiguredCapabilityProviderSignal({ ...params, plugin, providerId }),
     ),
   );
 }
 
-/** Checks whether any available plugin exposes env-backed auth for a provider id. */
 export function hasSnapshotProviderEnvAvailability(params: {
   snapshot: CapabilityMetadataSnapshot;
   providerId: string;
@@ -262,7 +205,6 @@ export function hasSnapshotProviderEnvAvailability(params: {
   );
 }
 
-/** Checks whether a specific provider id is available for a capability contract. */
 export function hasSnapshotCapabilityProviderAvailability(params: {
   snapshot: CapabilityMetadataSnapshot;
   key: CapabilityContractKey;
@@ -270,16 +212,10 @@ export function hasSnapshotCapabilityProviderAvailability(params: {
   config?: OpenClawConfig;
   authStore?: AuthProfileStore;
 }): boolean {
-  return hasAvailableCapabilityPlugin(params, (plugin) => {
-    if (!plugin.contracts?.[params.key]?.includes(params.providerId)) {
-      return false;
-    }
-    return hasConfiguredCapabilityProviderSignal({
-      plugin,
-      key: params.key,
-      providerId: params.providerId,
-      config: params.config,
-      authStore: params.authStore,
-    });
-  });
+  return hasAvailableCapabilityPlugin(
+    params,
+    (plugin) =>
+      Boolean(plugin.contracts?.[params.key]?.includes(params.providerId)) &&
+      hasConfiguredCapabilityProviderSignal({ ...params, plugin }),
+  );
 }

@@ -1,8 +1,6 @@
-// Interactive grouped auth-choice prompt used by onboarding and agent setup.
 import { normalizeProviderId } from "@openclaw/model-catalog-core/provider-id";
 import { expectDefined } from "@openclaw/normalization-core";
 import { resolveAgentModelPrimaryValue } from "../config/model-input.js";
-import type { OpenClawConfig } from "../config/types.openclaw.js";
 import type { WizardPrompter, WizardSelectOption } from "../wizard/prompts.js";
 import {
   buildAuthChoiceGroups,
@@ -19,29 +17,18 @@ const KEEP_CURRENT_AUTH_CHOICE = "__keep-current";
 type KeepCurrentAuthChoice = typeof KEEP_CURRENT_AUTH_CHOICE;
 type PromptAuthChoiceResult = AuthChoice | KeepCurrentAuthChoice;
 type AuthChoiceOrBack = PromptAuthChoiceResult | typeof BACK_VALUE;
-type PromptAuthChoiceGroupedParams = {
+type PromptAuthChoiceGroupedParams = Parameters<typeof buildAuthChoiceGroups>[0] & {
   prompter: WizardPrompter;
-  includeSkip: boolean;
-  assistantVisibleOnly?: boolean;
   allowedChoices?: ReadonlySet<string>;
   additionalGroups?: readonly AuthChoiceGroup[];
-  config?: OpenClawConfig;
-  workspaceDir?: string;
-  env?: NodeJS.ProcessEnv;
   allowKeepCurrentProvider?: boolean;
-  detectedProviderIds?: ReadonlySet<string>;
 };
 
 export function isKeepCurrentAuthChoice(value: unknown): value is KeepCurrentAuthChoice {
   return value === KEEP_CURRENT_AUTH_CHOICE;
 }
 
-function resolveConfiguredModelRef(config?: OpenClawConfig): string | undefined {
-  return resolveAgentModelPrimaryValue(config?.agents?.defaults?.model);
-}
-
-function resolveConfiguredProvider(config?: OpenClawConfig): string | undefined {
-  const modelRef = resolveConfiguredModelRef(config);
+function resolveConfiguredProvider(modelRef: string | undefined): string | undefined {
   const slashIndex = modelRef?.indexOf("/") ?? -1;
   if (!modelRef || slashIndex <= 0) {
     return undefined;
@@ -56,26 +43,6 @@ function groupMatchesProvider(group: AuthChoiceGroup, provider: string | undefin
   }
   const candidates = [group.value, ...(group.providerIds ?? [])];
   return candidates.some((candidate) => normalizeProviderId(candidate) === provider);
-}
-
-function groupToOption(
-  group: AuthChoiceGroup,
-  configuredProvider: string | undefined,
-  detectedProviderIds: ReadonlySet<string> | undefined,
-): WizardSelectOption {
-  const configured = groupMatchesProvider(group, configuredProvider);
-  const detected = [...(detectedProviderIds ?? [])].some((provider) =>
-    groupMatchesProvider(group, provider),
-  );
-  const statuses = [
-    ...(detected ? ["detected"] : []),
-    ...(configured ? ["currently configured"] : []),
-  ];
-  return {
-    value: group.value,
-    label: statuses.length > 0 ? `${group.label} (${statuses.join(", ")})` : group.label,
-    hint: group.hint,
-  };
 }
 
 /** Prompt for a provider group and auth method, with fallback flat selection when needed. */
@@ -98,7 +65,6 @@ export async function promptAuthChoiceGrouped(
     (group) => group.options.length > 0,
   );
   const availableGroups = [...availableBuiltInGroups, ...additionalGroups];
-  const groupById = new Map(availableGroups.map((group) => [group.value, group] as const));
   const isDetectedGroup = (group: AuthChoiceGroup) =>
     [...(params.detectedProviderIds ?? [])].some((provider) =>
       groupMatchesProvider(group, provider),
@@ -118,9 +84,9 @@ export async function promptAuthChoiceGrouped(
   const moreGroups = availableBuiltInGroups
     .filter((group) => !isDetectedGroup(group) && !isFeaturedAuthChoiceGroup(group))
     .toSorted(compareAuthChoiceGroups);
-  const configuredModelRef = resolveConfiguredModelRef(params.config);
+  const configuredModelRef = resolveAgentModelPrimaryValue(params.config?.agents?.defaults?.model);
   const configuredProvider = params.allowKeepCurrentProvider
-    ? resolveConfiguredProvider(params.config)
+    ? resolveConfiguredProvider(configuredModelRef)
     : undefined;
 
   const pickMethod = async (group: AuthChoiceGroup): Promise<AuthChoiceOrBack> => {
@@ -134,14 +100,14 @@ export async function promptAuthChoiceGrouped(
     if (group.options.length === 1 && !keepCurrentOption) {
       return expectDefined(group.options[0], "options entry at 0").value;
     }
-    return (await params.prompter.select({
+    return await params.prompter.select({
       message: group.methodMessage ?? `${group.label} auth method`,
       options: [
         ...(keepCurrentOption ? [keepCurrentOption] : []),
         ...group.options,
         { value: BACK_VALUE, label: "Back" },
       ],
-    })) as AuthChoiceOrBack;
+    });
   };
 
   // Without featured providers, the searchable catalog is the root page.
@@ -150,9 +116,21 @@ export async function promptAuthChoiceGrouped(
   while (true) {
     const searchable = showingMore || !hasFeaturedGroups;
     const pageGroups = searchable ? moreGroups : featuredGroups;
-    const options: WizardSelectOption[] = pageGroups.map((group) =>
-      groupToOption(group, configuredProvider, params.detectedProviderIds),
-    );
+    const options: WizardSelectOption[] = pageGroups.map((group) => {
+      const configured = groupMatchesProvider(group, configuredProvider);
+      const detected = [...(params.detectedProviderIds ?? [])].some((provider) =>
+        groupMatchesProvider(group, provider),
+      );
+      const statuses = [
+        ...(detected ? ["detected"] : []),
+        ...(configured ? ["currently configured"] : []),
+      ];
+      return {
+        value: group.value,
+        label: statuses.length > 0 ? `${group.label} (${statuses.join(", ")})` : group.label,
+        hint: group.hint,
+      };
+    });
     if (showingMore) {
       options.push({ value: BACK_VALUE, label: "Back" });
     } else {
@@ -179,7 +157,7 @@ export async function promptAuthChoiceGrouped(
       showingMore = true;
       continue;
     }
-    const group = groupById.get(selection);
+    const group = availableGroups.findLast((candidate) => candidate.value === selection);
     if (!group || group.options.length === 0) {
       if (!showingMore) {
         await params.prompter.note(

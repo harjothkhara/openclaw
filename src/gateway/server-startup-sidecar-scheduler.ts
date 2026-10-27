@@ -46,8 +46,7 @@ export function schedulePostReadySidecarTask(params: {
     })().catch((err: unknown) => {
       params.log.warn(`${params.name} failed after gateway ready: ${String(err)}`);
     });
-  });
-  handle.unref?.();
+  }).unref();
   return {
     stop: async () => {
       // Sidecars get both a synchronous stopped predicate and an AbortSignal so
@@ -67,10 +66,10 @@ export function scheduleGatewayGenerationTimer(params: {
   onError: (err: unknown) => void;
   shouldRun?: () => boolean;
 }): GatewayPostReadySidecarHandle {
-  const { scheduler } = params;
-  const controller = new AbortController();
-  const isStopped = () => controller.signal.aborted || params.shouldRun?.() === false;
-  const job = scheduler.schedule({
+  const scope = params.scheduler.scope();
+  const { signal } = scope;
+  const isStopped = () => signal.aborted || params.shouldRun?.() === false;
+  scope.schedule({
     id: params.origin,
     delayMs: params.delayMs,
     run: () => {
@@ -85,18 +84,13 @@ export function scheduleGatewayGenerationTimer(params: {
           await params.run(isStopped);
         },
         params.origin,
-        controller.signal,
+        signal,
       ).catch((err: unknown) => {
-        if (!controller.signal.aborted) {
+        if (!signal.aborted) {
           params.onError(err);
         }
       });
     },
   });
-  return {
-    stop: () => {
-      controller.abort();
-      return job.stop();
-    },
-  };
+  return scope;
 }

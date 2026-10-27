@@ -17,20 +17,28 @@ import {
   readOperatorModelPolicyMembership,
   resolveOperatorModelDefault,
 } from "../agents/operator-model-policy.js";
+import type { PreparedOperatorModelPolicy } from "../agents/operator-model-policy.types.js";
+import { readUtilityModelSetting } from "../agents/utility-model-setting.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { getGatewayPluginMetadataSnapshot } from "../plugins/current-plugin-metadata-state.js";
 import type { PluginMetadataSnapshot } from "../plugins/plugin-metadata-snapshot.types.js";
 import { isTranscriptOnlyOpenClawAssistantModel } from "../shared/transcript-only-openclaw-assistant.js";
 import { resolveOperatorRolePolicy } from "./operator-role-policy.js";
+import { SerializedJsonArray } from "./serialized-json.js";
 import type { ChatMetadataResult } from "./server-methods/chat-metadata-contract.js";
 import type { GatewayClient, GatewayRequestContext } from "./server-methods/types.js";
+import { projectModelFastModeCatalog } from "./session-fast-mode-presentation.js";
 import { getSessionDefaults } from "./session-utils-model.js";
 import type { GatewaySessionRow, GatewaySessionsDefaults } from "./session-utils.types.js";
 
-/** Inventory/auth changes do not retire choices; changed selection authority does. */
+/**
+ * Inventory/auth changes do not retire choices; changed selection authority does.
+ * Commit listeners pass the published inventory; reload's lease cache cannot see it.
+ */
 export function modelSelectionPoliciesMatch(
   previous: OpenClawConfig,
   next: OpenClawConfig,
+  publishedMetadata?: PluginMetadataSnapshot,
 ): boolean {
   if (
     (previous.models?.mode ?? "merge") !== (next.models?.mode ?? "merge") ||
@@ -38,7 +46,7 @@ export function modelSelectionPoliciesMatch(
   ) {
     return false;
   }
-  const manifestPlugins = getGatewayPluginMetadataSnapshot() ?? [];
+  const manifestPlugins = publishedMetadata ?? getGatewayPluginMetadataSnapshot() ?? [];
   for (const role of Object.values(next.gateway?.roles?.definitions ?? {})) {
     const before = prepareOperatorModelPolicy({
       cfg: previous,
@@ -61,7 +69,7 @@ export function modelSelectionPoliciesMatch(
   ]);
   for (const agentId of agentIds) {
     const policy = (cfg: OpenClawConfig) => {
-      const model = resolveDefaultModelForAgent({ cfg, agentId });
+      const model = resolveDefaultModelForAgent({ cfg, agentId, manifestPlugins });
       return createModelVisibilityPolicy({
         cfg,
         agentId,
@@ -98,7 +106,7 @@ export function projectOperatorModelRead<
     metadata?: ChatMetadataResult;
     sessionInfo?: GatewaySessionRow;
     kind?: string;
-    messages?: unknown[];
+    messages?: unknown[] | SerializedJsonArray;
     message?: unknown;
   },
 >(
@@ -108,8 +116,11 @@ export function projectOperatorModelRead<
     agentId: string;
     catalog?: ModelCatalogEntry[];
   },
-  result: T,
+  input: T,
 ): T {
+  const result = input.metadata
+    ? { ...input, metadata: projectModelFastModeCatalog(input.metadata, scope.client) }
+    : input;
   const cfg = scope.context.getRuntimeConfig();
   const presentation = prepareOperatorModelPresentation({
     cfg,
@@ -130,9 +141,10 @@ export function projectOperatorModelRead<
     ...(result.sessionInfo ? { sessionInfo: presentation.session(result.sessionInfo) } : {}),
     ...(result.messages
       ? {
-          messages: result.messages.map(
-            result.kind === "delta" ? presentation.deltaMessage : presentation.message,
-          ),
+          messages: (result.messages instanceof SerializedJsonArray
+            ? result.messages.materialize()
+            : result.messages
+          ).map(result.kind === "delta" ? presentation.deltaMessage : presentation.message),
         }
       : {}),
     ...(Object.hasOwn(result, "message") ? { message: presentation.message(result.message) } : {}),
@@ -144,7 +156,7 @@ export function prepareOperatorModelPresentation(params: {
   cfg: OpenClawConfig;
   policyConfig: OpenClawConfig;
   client: GatewayClient | null;
-  metadataSnapshot?: PluginMetadataSnapshot;
+  metadataSnapshot?: PluginMetadataSnapshot | null;
 }) {
   const { cfg, policyConfig, client } = params;
   // Catalog facts retain their runtime owner; permissions exclude tentative config activation.
@@ -152,16 +164,30 @@ export function prepareOperatorModelPresentation(params: {
   if (!modelPolicy) {
     return undefined;
   }
-  const metadataSnapshot = params.metadataSnapshot ?? getGatewayPluginMetadataSnapshot();
+  const metadataSnapshot =
+    params.metadataSnapshot === undefined
+      ? getGatewayPluginMetadataSnapshot()
+      : params.metadataSnapshot;
   const manifestPlugins = metadataSnapshot ?? [];
   const policy = prepareOperatorModelPolicy({
     cfg: policyConfig,
     policy: modelPolicy,
     manifestPlugins,
   });
+  return prepareOperatorModelPolicyPresentation({ cfg, policy, metadataSnapshot });
+}
+
+/** Same projection for a host-admitted requester without synthesizing a Gateway client. */
+export function prepareOperatorModelPolicyPresentation(params: {
+  cfg: OpenClawConfig;
+  policy?: PreparedOperatorModelPolicy;
+  metadataSnapshot?: PluginMetadataSnapshot | null;
+}) {
+  const { cfg, policy, metadataSnapshot } = params;
   if (!policy) {
     return undefined;
   }
+  const manifestPlugins = metadataSnapshot ?? [];
   const filterModels = <T extends { provider: string; id: string }>(models: T[]) =>
     models.filter((model) => policy.allows({ provider: model.provider, model: model.id }));
   const hidden = (provider: unknown, model: unknown) =>
@@ -169,13 +195,32 @@ export function prepareOperatorModelPresentation(params: {
     (typeof provider !== "string" ||
       typeof model !== "string" ||
       !policy.allows({ provider, model }));
-  const projectSession = <T extends HistoricalModelFields>(row: T): T => {
+  // Variants belong to this exact immutable row; visibility is still evaluated on every read.
+  const projectSession = <T extends HistoricalModelFields>(row: T, variants?: T[]): T => {
     const hideModel = hidden(row.modelProvider, row.model);
     const hideActiveModel = hidden(row.activeModelProvider, row.activeModel);
     const budget = asOptionalRecord(row.contextBudgetStatus);
     const hideBudget = budget && hidden(budget.provider, budget.model);
     if (!hideModel && !hideActiveModel && !hideBudget) {
       return row;
+    }
+    if (variants) {
+      for (const existing of variants) {
+        if (
+          existing.modelProvider ===
+            (hideModel && row.modelProvider != null ? undefined : row.modelProvider) &&
+          existing.model === (hideModel && row.model != null ? undefined : row.model) &&
+          existing.activeModelProvider ===
+            (hideActiveModel && row.activeModelProvider != null
+              ? undefined
+              : row.activeModelProvider) &&
+          existing.activeModel ===
+            (hideActiveModel && row.activeModel != null ? undefined : row.activeModel) &&
+          existing.contextBudgetStatus === (hideBudget ? undefined : row.contextBudgetStatus)
+        ) {
+          return existing;
+        }
+      }
     }
     const projected = { ...row };
     // Nulls clear merge-event state; omit identifiers without replacing those clearing facts.
@@ -191,6 +236,10 @@ export function prepareOperatorModelPresentation(params: {
     }
     if (hideBudget) {
       delete projected.contextBudgetStatus;
+    }
+    if (variants) {
+      Object.freeze(projected);
+      variants.push(projected);
     }
     return projected;
   };
@@ -305,6 +354,16 @@ export function prepareOperatorModelPresentation(params: {
           const utilityModel = result.defaultModels?.automaticUtilityModel
             ? allowedReference(result.defaultModels.automaticUtilityModel)
             : undefined;
+          // The route describes the utility model in effect, so it is disclosed only
+          // when this role may see that model.
+          const utilitySetting = result.defaultModels?.utilityRuntime
+            ? readUtilityModelSetting(cfg)
+            : undefined;
+          const utilityRuntimeVisible =
+            utilitySetting?.kind === "auto"
+              ? utilityModel !== undefined
+              : utilitySetting?.kind === "explicit" &&
+                allowedReference(utilitySetting.modelRef) !== undefined;
           const visibleProviders = new Set(models.map(({ provider }) => provider));
           for (const model of decisionModels ?? []) {
             visibleProviders.add(model.provider);
@@ -342,6 +401,9 @@ export function prepareOperatorModelPresentation(params: {
                     automaticUtilityModel: utilityModel
                       ? result.defaultModels.automaticUtilityModel
                       : null,
+                    ...(utilityRuntimeVisible && result.defaultModels.utilityRuntime
+                      ? { utilityRuntime: result.defaultModels.utilityRuntime }
+                      : {}),
                   },
                 }
               : {}),
