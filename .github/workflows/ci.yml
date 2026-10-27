@@ -81,7 +81,9 @@ jobs:
           ref: ${{ github.sha }}
           path: proof-runner
           persist-credentials: false
-          sparse-checkout: proof/mac-accent-185529
+          sparse-checkout: |
+            proof/mac-accent-185529
+            .github/workflows/ci.yml
       - uses: actions/checkout@v4
         with:
           repository: openclaw/openclaw

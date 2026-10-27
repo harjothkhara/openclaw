@@ -7,7 +7,7 @@ import { primingVerdict, talkRequest, talkResponse, forbidden } from "./priming.
 test("required baseline is true PR merge-base", () =>
   assert.equal(RED, "1299676aacb6230a0960bd4f2178fb7ddd103849"));
 test("failed-job reruns cannot allocate another Mac", () => {
-  const workflow = readFileSync(new URL("./workflow.fragment.yml", import.meta.url), "utf8");
+  const workflow = readFileSync(new URL("../../.github/workflows/ci.yml", import.meta.url), "utf8");
   assert.match(
     workflow,
     /  accent:\n    needs: admission\n    if: github\.run_attempt == 1\n    runs-on: macos/,
@@ -21,7 +21,7 @@ test("missing reviewed-workflow marker refuses before setup", () => {
   });
   assert.equal(r.status, 1);
   assert.match(r.stderr, /DISPATCH REFUSED: reviewed fork workflow required/);
-  const workflow = readFileSync(new URL("./workflow.fragment.yml", import.meta.url), "utf8");
+  const workflow = readFileSync(new URL("../../.github/workflows/ci.yml", import.meta.url), "utf8");
   assert(
     workflow.includes(
       "if: github.event_name == 'workflow_dispatch' && github.repository == 'harjothkhara/openclaw'",
