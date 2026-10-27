@@ -1,11 +1,11 @@
-name: Mac New Thread red control
-run-name: Issue 186215 base red / ${{ inputs.target_sha }}
+name: Mac New Thread green proof
+run-name: Issue 186215 PR green / ${{ inputs.target_sha }}
 
 on:
   workflow_dispatch:
     inputs:
       target_sha:
-        description: Exact fork proof commit containing only the test and workflow
+        description: Exact upstream PR head SHA
         required: true
         type: string
         default: ""
@@ -14,24 +14,24 @@ permissions:
   contents: read
 
 concurrency:
-  group: mac-new-thread-186215-red
+  group: mac-new-thread-186215-green
   cancel-in-progress: false
 
 jobs:
-  mac-new-thread-red:
+  mac-new-thread-green:
     if: github.repository == 'harjothkhara/openclaw' && github.ref == 'refs/heads/proof/mac-new-thread-186215-2026-10-27'
     runs-on: macos-26-intel
-    timeout-minutes: 75
+    timeout-minutes: 90
     steps:
-      - name: Check out exact proof commit
+      - name: Check out exact upstream PR revision
         uses: actions/checkout@v4
         with:
-          repository: harjothkhara/openclaw
+          repository: openclaw/openclaw
           ref: ${{ inputs.target_sha }}
           fetch-depth: 2
           persist-credentials: false
 
-      - name: Verify base and test-only delta
+      - name: Verify exact source and current PR branch
         env:
           TARGET_SHA: ${{ inputs.target_sha }}
         shell: bash
@@ -40,12 +40,10 @@ jobs:
           mkdir -p proof-logs
           [[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]]
           [[ "$(git rev-parse HEAD)" == "$TARGET_SHA" ]]
-          [[ "$TARGET_SHA" == "$GITHUB_SHA" ]]
-          [[ "$(git rev-parse HEAD^)" == "1b50ce5a6835798634c4d98ac87891f4e5290120" ]]
-          git diff --name-only HEAD^ HEAD | sort > proof-logs/changed-files.log
-          printf '%s\n' '.github/workflows/ci.yml' 'apps/macos/Tests/OpenClawIPCTests/MacGatewayChatTransportMappingTests.swift' | sort > proof-logs/expected-files.log
-          cmp proof-logs/changed-files.log proof-logs/expected-files.log
-          printf 'Base: %s\nTest commit: %s\nWorkflow: %s\n' "$(git rev-parse HEAD^)" "$TARGET_SHA" "$GITHUB_SHA" | tee proof-logs/identity.log
+          branch_sha="$(git ls-remote https://github.com/openclaw/openclaw.git refs/heads/openclaw/marine-crayfish-3 | cut -f1)"
+          [[ "$branch_sha" == "$TARGET_SHA" ]]
+          printf 'PR: 186259\nSource: %s\nPR branch: %s\nWorkflow: %s\n' "$TARGET_SHA" "$branch_sha" "$GITHUB_SHA" | tee proof-logs/identity.log
+          git show -s --format='%H%n%an <%ae>%n%B' HEAD > proof-logs/commit.log
 
       - name: Set up pnpm
         uses: pnpm/action-setup@v4
@@ -69,48 +67,57 @@ jobs:
           set -euo pipefail
           node scripts/prepare-apple-mermaid.mjs 2>&1 | tee proof-logs/assets.log
 
-      - name: Restore exact proof build
+      - name: Restore exact PR native build
         id: native-cache
         uses: actions/cache/restore@v4
         with:
           path: apps/macos/.build
           key: mac-new-thread-native-macos-26-intel-${{ inputs.target_sha }}-${{ hashFiles('apps/macos/Package.resolved') }}
 
-      - name: Build native test bundle
+      - name: Build native tests and Mac app
         shell: bash
         run: |
           set -euo pipefail
-          swift build --package-path apps/macos --build-system native --build-tests 2>&1 | tee proof-logs/build.log
+          swift build --package-path apps/macos --build-system native --build-tests 2>&1 | tee proof-logs/build-tests.log
+          swift build --package-path apps/macos --build-system native --product OpenClaw 2>&1 | tee proof-logs/build-app.log
 
-      - name: Save exact proof build
+      - name: Save exact PR native build
         if: ${{ steps.native-cache.outputs.cache-hit != 'true' }}
         uses: actions/cache/save@v4
         with:
           path: apps/macos/.build
           key: mac-new-thread-native-macos-26-intel-${{ inputs.target_sha }}-${{ hashFiles('apps/macos/Package.resolved') }}
 
-      - name: Require finite base-red regression
+      - name: Require transport regressions green
         shell: bash
         run: |
           set -euo pipefail
-          set +e
           node scripts/test-macos-native.mts named \
             --package-path apps/macos --build-system native \
             --enable-code-coverage --skip-build \
-            --filter 'MacGatewayChatTransportMappingTests/explicitSessionCreationUsesCapturedGateway' \
-            2>&1 | tee proof-logs/red-test.log
-          test_status="${PIPESTATUS[0]}"
-          set -e
-          [[ "$test_status" -ne 0 ]]
-          grep -Fq 'explicitSessionCreationUsesCapturedGateway' proof-logs/red-test.log
-          grep -Fq 'sessions.create agent/base-ref options not supported by this transport' proof-logs/red-test.log
-          grep -Eq 'Test run with 1 test.*failed|Executed 1 test' proof-logs/red-test.log
-          printf 'Expected base failure confirmed; test exit=%s\n' "$test_status" | tee proof-logs/verdict.log
+            --filter MacGatewayChatTransportMappingTests \
+            2>&1 | tee proof-logs/transport-tests.log
+          grep -Fq 'explicitSessionCreationUsesCapturedGateway' proof-logs/transport-tests.log
+          grep -Eq 'Test run with [1-9][0-9]* tests.*passed|Executed [1-9][0-9]* tests.*0 failures' proof-logs/transport-tests.log
+
+      - name: Install pinned Swift lint tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          scripts/install-swift-tools.sh .build/swift-tools 2>&1 | tee proof-logs/swift-tools.log
+          echo "$PWD/.build/swift-tools" >> "$GITHUB_PATH"
+
+      - name: Check native Swift format and lint
+        shell: bash
+        run: |
+          set -euo pipefail
+          scripts/format-swift.sh macos 2>&1 | tee proof-logs/swiftformat.log
+          scripts/lint-swift.sh macos 2>&1 | tee proof-logs/swiftlint.log
 
       - name: Upload complete proof logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: mac-new-thread-base-red-${{ github.run_id }}-${{ github.run_attempt }}
+          name: mac-new-thread-green-${{ github.run_id }}-${{ github.run_attempt }}
           path: proof-logs/
           if-no-files-found: error
