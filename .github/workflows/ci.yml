@@ -42,7 +42,7 @@ jobs:
           [[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]]
           actual="$(git rev-parse HEAD)"
           [[ "$actual" == "$TARGET_SHA" ]]
-          [[ "$TARGET_SHA" == "b2b59993fde3932ca23823672aeefbb29435ba95" ]]
+          [[ "$TARGET_SHA" == "b34033c907786da68f99e5006d0feb2bf8793b7f" ]]
           git cat-file -e 1299676aacb6230a0960bd4f2178fb7ddd103849^{commit}
           [[ "$(git merge-base HEAD 1299676aacb6230a0960bd4f2178fb7ddd103849)" == "1299676aacb6230a0960bd4f2178fb7ddd103849" ]]
           printf 'Requested: %s\nChecked out: %s\nWorkflow: %s\n' "$TARGET_SHA" "$actual" "$GITHUB_SHA" | tee proof-logs/identity.log
@@ -87,6 +87,13 @@ jobs:
           set -euo pipefail
           node scripts/prepare-apple-mermaid.mjs 2>&1 | tee proof-logs/assets.log
 
+      - name: Restore prior Mac build for incremental native validation
+        if: ${{ !inputs.ui_proof }}
+        uses: actions/cache/restore@v4
+        with:
+          path: apps/macos/.build
+          key: mac-accent-app-macos-26-intel-b2b59993fde3932ca23823672aeefbb29435ba95-${{ hashFiles('apps/macos/Package.resolved') }}
+
       - name: Build macOS test bundle
         if: ${{ !inputs.ui_proof }}
         shell: bash
@@ -128,7 +135,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: apps/macos/.build
-          key: mac-accent-app-macos-26-intel-b2b59993fde3932ca23823672aeefbb29435ba95-${{ hashFiles('apps/macos/Package.resolved') }}
+          key: mac-accent-app-macos-26-intel-b34033c907786da68f99e5006d0feb2bf8793b7f-${{ hashFiles('apps/macos/Package.resolved') }}
 
       - name: Check out red-control revision
         if: ${{ inputs.ui_proof }}
@@ -188,8 +195,8 @@ jobs:
           set -euo pipefail
           git restore apps/macos/Sources/OpenClaw/WebChatSwiftUI.swift
           rm -rf apps/macos/.build
-          git checkout --detach b2b59993fde3932ca23823672aeefbb29435ba95
-          [[ "$(git rev-parse HEAD)" == "b2b59993fde3932ca23823672aeefbb29435ba95" ]]
+          git checkout --detach b34033c907786da68f99e5006d0feb2bf8793b7f
+          [[ "$(git rev-parse HEAD)" == "b34033c907786da68f99e5006d0feb2bf8793b7f" ]]
           git diff --name-only 1299676aacb6230a0960bd4f2178fb7ddd103849 HEAD | grep -Ev '^(apps/macos/|apps/shared/OpenClawKit/(Sources/OpenClawKit/GatewayUserPreferences.swift|Tests/OpenClawKitTests/GatewayUserPreferencesTests.swift)$)' > proof-logs/non-mac-changes.log || true
           [[ ! -s proof-logs/non-mac-changes.log ]]
 
@@ -207,7 +214,7 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: apps/macos/.build
-          key: mac-accent-app-macos-26-intel-b2b59993fde3932ca23823672aeefbb29435ba95-instrumented-${{ github.sha }}-${{ hashFiles('apps/macos/Package.resolved') }}
+          key: mac-accent-app-macos-26-intel-b34033c907786da68f99e5006d0feb2bf8793b7f-instrumented-${{ github.sha }}-${{ hashFiles('apps/macos/Package.resolved') }}
 
       - name: Build PR Mac app against the identical Gateway runtime
         if: ${{ inputs.ui_proof }}
@@ -221,7 +228,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: apps/macos/.build
-          key: mac-accent-app-macos-26-intel-b2b59993fde3932ca23823672aeefbb29435ba95-instrumented-${{ github.sha }}-${{ hashFiles('apps/macos/Package.resolved') }}
+          key: mac-accent-app-macos-26-intel-b34033c907786da68f99e5006d0feb2bf8793b7f-instrumented-${{ github.sha }}-${{ hashFiles('apps/macos/Package.resolved') }}
 
       - name: Require live green result
         if: ${{ inputs.ui_proof }}
@@ -233,7 +240,7 @@ jobs:
             "$PWD/proof-driver/.github/proof/mac-accent" \
             "$PWD/proof-logs/green-head" green \
             2>&1 | tee proof-logs/green-head-run.log
-          node -e 'const r=require("./proof-logs/green-head/result.json");if(!["passed","passed-instrumented"].includes(r.status)||r.head!=="b2b59993fde3932ca23823672aeefbb29435ba95")process.exit(1)'
+          node -e 'const r=require("./proof-logs/green-head/result.json");if(!["passed","passed-instrumented"].includes(r.status)||r.head!=="b34033c907786da68f99e5006d0feb2bf8793b7f")process.exit(1)'
 
       - name: Upload complete proof logs
         if: always()
