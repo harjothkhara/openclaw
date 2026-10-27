@@ -21,7 +21,7 @@ permissions:
 jobs:
   mac-chat-accent:
     if: github.repository == 'harjothkhara/openclaw' && github.ref == 'refs/heads/proof/mac-accent-128922-2026-10-27'
-    runs-on: macos-26
+    runs-on: macos-26-intel
     timeout-minutes: 70
     steps:
       - name: Check out exact PR revision
@@ -113,7 +113,7 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: apps/macos/.build
-          key: mac-accent-app-macos-26-1299676aacb6230a0960bd4f2178fb7ddd103849-${{ hashFiles('apps/macos/Package.resolved') }}
+          key: mac-accent-app-macos-26-intel-1299676aacb6230a0960bd4f2178fb7ddd103849-${{ hashFiles('apps/macos/Package.resolved') }}
 
       - name: Build red-control Gateway and Mac app
         if: ${{ inputs.ui_proof }}
@@ -128,7 +128,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: apps/macos/.build
-          key: mac-accent-app-macos-26-1299676aacb6230a0960bd4f2178fb7ddd103849-${{ hashFiles('apps/macos/Package.resolved') }}
+          key: mac-accent-app-macos-26-intel-1299676aacb6230a0960bd4f2178fb7ddd103849-${{ hashFiles('apps/macos/Package.resolved') }}
 
       - name: Require live red control
         if: ${{ inputs.ui_proof }}
@@ -158,7 +158,7 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: apps/macos/.build
-          key: mac-accent-app-macos-26-2d61f300b4e45639f1515d5e99610849ab3fa484-${{ hashFiles('apps/macos/Package.resolved') }}
+          key: mac-accent-app-macos-26-intel-2d61f300b4e45639f1515d5e99610849ab3fa484-${{ hashFiles('apps/macos/Package.resolved') }}
 
       - name: Build PR Mac app against the identical Gateway runtime
         if: ${{ inputs.ui_proof }}
@@ -172,7 +172,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: apps/macos/.build
-          key: mac-accent-app-macos-26-2d61f300b4e45639f1515d5e99610849ab3fa484-${{ hashFiles('apps/macos/Package.resolved') }}
+          key: mac-accent-app-macos-26-intel-2d61f300b4e45639f1515d5e99610849ab3fa484-${{ hashFiles('apps/macos/Package.resolved') }}
 
       - name: Require live green result
         if: ${{ inputs.ui_proof }}
