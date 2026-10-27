@@ -181,6 +181,7 @@ final class ControlChannel {
     private var eventServerLease: GatewayConnection.ServerLease?
     private var heartbeat: (event: ControlHeartbeatEvent, lease: GatewayConnection.ServerLease)?
     private var heartbeatReadTask: Task<Void, Never>?
+    private var gatewayAccentReadTask: Task<Void, Never>?
 
     private func synchronizeRouteGeneration() -> UInt64 {
         // Endpoint stream delivery can lag source adoption; fence UI publication directly.
@@ -628,6 +629,7 @@ final class ControlChannel {
     private func retireEventState() {
         self.eventServerLease = nil
         self.heartbeatReadTask?.cancel()
+        self.gatewayAccentReadTask?.cancel()
         // Keep the last known main key until a current hello replaces it.
         // Retired deliveries cannot use that metadata to recreate old work.
         WorkActivityStore.shared.reset()
@@ -674,9 +676,12 @@ final class ControlChannel {
             // caller's own profile; receipt means our profile appearance
             // changed on another device.
             self.refreshProfileAccent(delivery: delivery)
+        case let .event(evt) where evt.event == "config.changed":
+            self.refreshGatewayAccent(delivery: delivery)
         case .snapshot:
             self.reconcileCurrentConnection(generation: self.synchronizeRouteGeneration())
             self.refreshProfileAccent(delivery: delivery)
+            self.refreshGatewayAccent(delivery: delivery)
         default:
             break
         }
@@ -708,6 +713,24 @@ final class ControlChannel {
             // may repaint the newly selected Gateway's profile appearance.
             guard delivery.isCurrent else { return }
             AppStateStore.shared.profileAccentHex = accent
+        }
+    }
+
+    private func refreshGatewayAccent(delivery: GatewayConnection.PushDelivery) {
+        self.gatewayAccentReadTask?.cancel()
+        self.gatewayAccentReadTask = Task { [weak self] in
+            guard let self, delivery.isCurrent else { return }
+            do {
+                let data = try await self.gateway.request(
+                    method: "config.get", params: nil, timeoutMs: 8000,
+                    ifCurrentServerLease: delivery.serverLease)
+                let snapshot = try JSONDecoder().decode(ConfigSnapshot.self, from: data)
+                let raw = snapshot.config?["ui"]?.dictionaryValue?["seamColor"]?.stringValue
+                guard !Task.isCancelled, delivery.isCurrent else { return }
+                AppStateStore.shared.seamColorHex = GatewayUserPreferences.normalizedAccentHex(raw)
+            } catch {
+                // Keep the last known accent when this Gateway cannot provide a current config.
+            }
         }
     }
 
