@@ -1,6 +1,5 @@
-name: Mac New Thread green proof
-run-name: Issue 186215 PR green / ${{ inputs.target_sha }}
-
+name: Mac New Thread real-app proof
+run-name: Issue 186215 base-red and PR-green / ${{ inputs.target_sha }}
 on:
   workflow_dispatch:
     inputs:
@@ -8,116 +7,125 @@ on:
         description: Exact upstream PR head SHA
         required: true
         type: string
-        default: ""
-
 permissions:
   contents: read
-
 concurrency:
-  group: mac-new-thread-186215-green
+  group: mac-new-thread-186215-real-app
   cancel-in-progress: false
-
 jobs:
-  mac-new-thread-green:
+  mac-new-thread-real-app:
     if: github.repository == 'harjothkhara/openclaw' && github.ref == 'refs/heads/proof/mac-new-thread-186215-2026-10-27'
     runs-on: macos-26-intel
-    timeout-minutes: 90
+    timeout-minutes: 120
+    env:
+      BASE_SHA: 1b50ce5a6835798634c4d98ac87891f4e5290120
+      TARGET_SHA: ${{ inputs.target_sha }}
     steps:
-      - name: Check out exact upstream PR revision
+      - name: Check out fork-only proof driver
+        uses: actions/checkout@v4
+        with:
+          path: proof-runner
+          persist-credentials: false
+          sparse-checkout: |
+            proof
+            package.json
+      - name: Check out exact unfixed source
         uses: actions/checkout@v4
         with:
           repository: openclaw/openclaw
-          ref: ${{ inputs.target_sha }}
-          fetch-depth: 2
+          ref: ${{ env.BASE_SHA }}
+          path: sut-red
           persist-credentials: false
-
-      - name: Verify exact source and current PR branch
-        env:
-          TARGET_SHA: ${{ inputs.target_sha }}
+      - name: Check out exact PR source
+        uses: actions/checkout@v4
+        with:
+          repository: openclaw/openclaw
+          ref: ${{ env.TARGET_SHA }}
+          path: sut-green
+          persist-credentials: false
+      - name: Verify exact source and driver
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p proof-logs
           [[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]]
-          [[ "$(git rev-parse HEAD)" == "$TARGET_SHA" ]]
+          [[ "$(git -C sut-red rev-parse HEAD)" == "$BASE_SHA" ]]
+          [[ "$(git -C sut-green rev-parse HEAD)" == "$TARGET_SHA" ]]
           branch_sha="$(git ls-remote https://github.com/openclaw/openclaw.git refs/heads/openclaw/marine-crayfish-3 | cut -f1)"
           [[ "$branch_sha" == "$TARGET_SHA" ]]
-          printf 'PR: 186259\nSource: %s\nPR branch: %s\nWorkflow: %s\n' "$TARGET_SHA" "$branch_sha" "$GITHUB_SHA" | tee proof-logs/identity.log
-          git show -s --format='%H%n%an <%ae>%n%B' HEAD > proof-logs/commit.log
-
+          echo 'f36f1cd863626f9071066db7a87758b4ec71fb72e8414e50e6f732174a8643a2  proof-runner/proof/new-thread.mjs' | shasum -a 256 -c
+          echo '1e72773582dcf974edc527ae84e2eb38a9d139d24ca4bea9d64a22738be87  proof-runner/proof/new-thread-ax.js' | shasum -a 256 -c
+          node --check proof-runner/proof/new-thread.mjs
+          printf 'Base %s\nPR %s\nWorkflow %s\n' "$BASE_SHA" "$TARGET_SHA" "$GITHUB_SHA"
       - name: Set up pnpm
         uses: pnpm/action-setup@v4
         with:
+          version: 12.15.0
           run_install: false
-
       - name: Select supported Node
         uses: actions/setup-node@v4
         with:
           node-version: 24.22.1
-
-      - name: Install dependencies
-        shell: bash
-        run: |
-          set -euo pipefail
-          pnpm install --frozen-lockfile 2>&1 | tee proof-logs/install.log
-
-      - name: Prepare native assets
-        shell: bash
-        run: |
-          set -euo pipefail
-          node scripts/prepare-apple-mermaid.mjs 2>&1 | tee proof-logs/assets.log
-
-      - name: Restore exact PR native build
-        id: native-cache
+      - name: Restore exact base native build
+        id: base-cache
         uses: actions/cache/restore@v4
         with:
-          path: apps/macos/.build
-          key: mac-new-thread-native-macos-26-intel-${{ inputs.target_sha }}-${{ hashFiles('apps/macos/Package.resolved') }}
-
-      - name: Build native tests and Mac app
+          path: sut-red/apps/macos/.build
+          key: mac-new-thread-package-macos-26-intel-${{ env.BASE_SHA }}-${{ hashFiles('sut-red/apps/macos/Package.resolved') }}
+      - name: Build unfixed Mac app and Gateway
         shell: bash
         run: |
           set -euo pipefail
-          swift build --package-path apps/macos --build-system native --build-tests 2>&1 | tee proof-logs/build-tests.log
-          swift build --package-path apps/macos --build-system native --product OpenClaw 2>&1 | tee proof-logs/build-app.log
-
-      - name: Save exact PR native build
-        if: ${{ steps.native-cache.outputs.cache-hit != 'true' }}
+          cd sut-red
+          BUILD_ARCHS="$(uname -m)" BUILD_CONFIG=debug ALLOW_ADHOC_SIGNING=1 OPENCLAW_SKIP_MLX_TTS=1 \
+            /bin/bash scripts/package-mac-app.sh > "$GITHUB_WORKSPACE/red-package.log" 2>&1
+      - name: Save exact base native build
+        if: ${{ steps.base-cache.outputs.cache-hit != 'true' }}
         uses: actions/cache/save@v4
         with:
-          path: apps/macos/.build
-          key: mac-new-thread-native-macos-26-intel-${{ inputs.target_sha }}-${{ hashFiles('apps/macos/Package.resolved') }}
-
-      - name: Require transport regressions green
+          path: sut-red/apps/macos/.build
+          key: mac-new-thread-package-macos-26-intel-${{ env.BASE_SHA }}-${{ hashFiles('sut-red/apps/macos/Package.resolved') }}
+      - name: Run guarded real-app red control
         shell: bash
         run: |
           set -euo pipefail
-          node scripts/test-macos-native.mts named \
-            --package-path apps/macos --build-system native \
-            --skip-build \
-            --filter MacGatewayChatTransportMappingTests \
-            2>&1 | tee proof-logs/transport-tests.log
-          grep -Fq 'explicitSessionCreationUsesCapturedGateway' proof-logs/transport-tests.log
-          grep -Eq 'Test run with [1-9][0-9]* tests.*passed|Executed [1-9][0-9]* tests.*0 failures' proof-logs/transport-tests.log
-
-      - name: Install pinned Swift lint tools
+          node proof-runner/proof/new-thread.mjs \
+            --source "$GITHUB_WORKSPACE/sut-red" --app "$GITHUB_WORKSPACE/sut-red/dist/OpenClaw.app" \
+            --sha "$BASE_SHA" --mode red --out "$GITHUB_WORKSPACE/new-thread-red"
+      - name: Release disposable base checkout
+        shell: bash
+        run: rm -rf -- "$GITHUB_WORKSPACE/sut-red"
+      - name: Restore exact PR native build
+        id: green-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: sut-green/apps/macos/.build
+          key: mac-new-thread-package-macos-26-intel-${{ env.TARGET_SHA }}-${{ hashFiles('sut-green/apps/macos/Package.resolved') }}
+      - name: Build PR Mac app and Gateway
         shell: bash
         run: |
           set -euo pipefail
-          scripts/install-swift-tools.sh .build/swift-tools 2>&1 | tee proof-logs/swift-tools.log
-          echo "$PWD/.build/swift-tools" >> "$GITHUB_PATH"
-
-      - name: Check native Swift format and lint
+          cd sut-green
+          BUILD_ARCHS="$(uname -m)" BUILD_CONFIG=debug ALLOW_ADHOC_SIGNING=1 OPENCLAW_SKIP_MLX_TTS=1 \
+            /bin/bash scripts/package-mac-app.sh > "$GITHUB_WORKSPACE/green-package.log" 2>&1
+      - name: Save exact PR native build
+        if: ${{ steps.green-cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v4
+        with:
+          path: sut-green/apps/macos/.build
+          key: mac-new-thread-package-macos-26-intel-${{ env.TARGET_SHA }}-${{ hashFiles('sut-green/apps/macos/Package.resolved') }}
+      - name: Run guarded real-app green control
         shell: bash
         run: |
           set -euo pipefail
-          scripts/format-swift.sh macos 2>&1 | tee proof-logs/swiftformat.log
-          scripts/lint-swift.sh macos 2>&1 | tee proof-logs/swiftlint.log
-
-      - name: Upload complete proof logs
+          node proof-runner/proof/new-thread.mjs \
+            --source "$GITHUB_WORKSPACE/sut-green" --app "$GITHUB_WORKSPACE/sut-green/dist/OpenClaw.app" \
+            --sha "$TARGET_SHA" --mode green --out "$GITHUB_WORKSPACE/new-thread-green"
+      - name: Upload sanitized evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: mac-new-thread-green-${{ github.run_id }}-${{ github.run_attempt }}
-          path: proof-logs/
-          if-no-files-found: error
+          name: mac-new-thread-real-app-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            new-thread-red/evidence/
+            new-thread-green/evidence/
+          if-no-files-found: warn
