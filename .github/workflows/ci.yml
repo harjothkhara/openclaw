@@ -74,7 +74,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          shasum -a 256 proof-tools/.github/proof/approval-sync/NativeUI.js proof-tools/.github/proof/approval-sync/drive.mjs | tee -a proof-logs/identity.log
+          shasum -a 256 proof-tools/.github/proof/approval-sync/NativeUI.js proof-tools/.github/proof/approval-sync/drive.mjs proof-tools/.github/proof/approval-sync/rpc-admin.ts | tee -a proof-logs/identity.log
           /usr/bin/osascript -l JavaScript proof-tools/.github/proof/approval-sync/NativeUI.js preflight
           /usr/sbin/screencapture -x "$RUNNER_TEMP/approval-144685-preflight.png"
 

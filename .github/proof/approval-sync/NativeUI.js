@@ -123,6 +123,7 @@ function run(args) {
     var title = args[3];
     var matches = [];
     app.windows().forEach(function (window) {
+      if (attribute(window, "AXTitle") !== "OpenClaw Command Approval") return;
       var nodes = descendants(window, 0, { left: 5000 });
       if (
         !text(nodes).some(function (value) {

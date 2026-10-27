@@ -124,24 +124,37 @@ async function run(command, args, timeout = 30000) {
 }
 
 async function rpc(method, params = {}, timeout = 15000) {
+  const admin = method !== "health" && method !== "exec.approval.request";
   const { stdout } = await run(
     "pnpm",
-    [
-      "--silent",
-      "openclaw",
-      "gateway",
-      "call",
-      method,
-      "--json",
-      "--timeout",
-      String(timeout),
-      "--params",
-      JSON.stringify(params),
-    ],
+    admin
+      ? [
+          "--silent",
+          "exec",
+          "tsx",
+          path.join(path.dirname(ui), "rpc-admin.ts"),
+          repo,
+          method,
+          JSON.stringify(params),
+          String(timeout),
+        ]
+      : [
+          "--silent",
+          "openclaw",
+          "gateway",
+          "call",
+          method,
+          "--json",
+          "--timeout",
+          String(timeout),
+          "--params",
+          JSON.stringify(params),
+        ],
     timeout + 15000,
   );
-  const result = JSON.parse(stdout.trim());
-  record("cli-rpc", { method, params, result });
+  const output = JSON.parse(stdout.trim());
+  const result = admin ? output.result : output;
+  record("cli-rpc", { method, params, result, ...(admin ? { receipt: output.receipt } : {}) });
   return result;
 }
 
@@ -208,8 +221,12 @@ async function decision(marker, expected) {
 }
 
 async function external(marker) {
+  const id = "approval-proof-" + marker;
+  const pending = await rpc("exec.approval.get", { id });
+  assert.equal(pending.id, id, "Independent resolver must see the exact pending approval");
+  assert(pending.expiresAtMs > Date.now(), "Approval expired before external resolution");
   await rpc("exec.approval.resolve", {
-    id: "approval-proof-" + marker,
+    id,
     decision: "deny",
   });
   await decision(marker, "deny");
