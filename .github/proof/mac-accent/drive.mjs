@@ -276,18 +276,20 @@ try {
         accent: /MAC_ACCENT_PROOF accent=([^\s]+)/.exec(line)?.[1],
         native: /native=(true|false)/.exec(line)?.[1] === "true",
       }));
-  await waitFor("instrumented native chat initial render", () =>
-    accentSamples().some((s) => s.native),
-  );
-  const beforeSamples = accentSamples();
-  record("chat-consumer-before", { samples: beforeSamples });
   const latestAccent = (samples) => samples.filter((sample) => sample.native).at(-1)?.accent;
   if (expected === "green") {
-    assert(
-      latestAccent(beforeSamples) === "#e00070",
-      "PR app did not consume the initial saved magenta accent",
+    await waitFor(
+      "initial saved magenta consumed by native chat",
+      () => latestAccent(accentSamples()) === "#e00070",
+    );
+  } else {
+    await waitFor(
+      "instrumented native chat initial render",
+      () => latestAccent(accentSamples()) !== undefined,
     );
   }
+  const beforeSamples = accentSamples();
+  record("chat-consumer-before", { samples: beforeSamples });
   const before = await screenshot("01-before-chat");
 
   const snapshot = await rpc("config.get");
@@ -304,7 +306,7 @@ try {
   if (expected === "green") {
     await waitFor(
       "native chat consumed green on the same app",
-      () => accentSamples().some((s) => s.native && s.accent === "#00d070"),
+      () => latestAccent(accentSamples()) === "#00d070",
       30000,
     );
   } else {
@@ -344,6 +346,11 @@ try {
   } else {
     assert.equal(verdict.changed, false, "Base unexpectedly passed the positive accent proof");
     assert(!consumedGreen, "Base chat unexpectedly consumed the new green accent");
+    assert.equal(
+      latestAccent(afterSamples),
+      latestAccent(beforeSamples),
+      "Base chat changed to a different accent during the red control",
+    );
     if (verdict.validImages) {
       assert(
         verdict.after.green <= verdict.before.green + 30,

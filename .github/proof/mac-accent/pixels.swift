@@ -12,8 +12,14 @@ func count(_ path: String) throws -> [String: Int] {
     var light = 0
     var magenta = 0
     var green = 0
-    for y in 0..<image.pixelsHigh {
-        for x in 0..<image.pixelsWide {
+    // Ignore the title bar and native sidebar. Protected chat content can be
+    // black even while ordinary window chrome remains visible.
+    let left = image.pixelsWide * 40 / 100
+    let right = image.pixelsWide * 98 / 100
+    let top = max(50, image.pixelsHigh * 10 / 100)
+    let bottom = image.pixelsHigh * 98 / 100
+    for y in top..<bottom {
+        for x in left..<right {
             guard let color = image.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB) else { continue }
             let r = color.redComponent, g = color.greenComponent, b = color.blueComponent
             if max(r, g, b) > 0.08 { nonBlack += 1 }
@@ -25,14 +31,16 @@ func count(_ path: String) throws -> [String: Int] {
             if g > 0.45 && g > r * 1.6 && g > b * 1.35 { green += 1 }
         }
     }
-    return ["width": image.pixelsWide, "height": image.pixelsHigh, "nonBlack": nonBlack,
+    return ["width": image.pixelsWide, "height": image.pixelsHigh,
+            "sampleWidth": right - left, "sampleHeight": bottom - top,
+            "nonBlack": nonBlack,
             "nonWhite": nonWhite, "dark": dark, "light": light,
             "magenta": magenta, "green": green]
 }
 
 let before = try count(CommandLine.arguments[1])
 let after = try count(CommandLine.arguments[2])
-let minimum = before["width"]! * before["height"]! / 100
+let minimum = before["sampleWidth"]! * before["sampleHeight"]! / 100
 let validImages = before["nonBlack"]! > minimum && after["nonBlack"]! > minimum
     && before["nonWhite"]! > minimum && after["nonWhite"]! > minimum
     && before["dark"]! > 40 && after["dark"]! > 40
