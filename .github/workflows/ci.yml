@@ -22,13 +22,14 @@ jobs:
   mac-chat-accent:
     if: github.repository == 'harjothkhara/openclaw' && github.ref == 'refs/heads/proof/mac-accent-128922-2026-10-27'
     runs-on: macos-26
-    timeout-minutes: 45
+    timeout-minutes: 70
     steps:
       - name: Check out exact PR revision
         uses: actions/checkout@v4
         with:
           repository: openclaw/openclaw
           ref: ${{ inputs.target_sha }}
+          fetch-depth: 2
           persist-credentials: false
 
       - name: Verify exact revision
@@ -42,6 +43,7 @@ jobs:
           actual="$(git rev-parse HEAD)"
           [[ "$actual" == "$TARGET_SHA" ]]
           [[ "$TARGET_SHA" == "2d61f300b4e45639f1515d5e99610849ab3fa484" ]]
+          [[ "$(git rev-parse HEAD^)" == "1299676aacb6230a0960bd4f2178fb7ddd103849" ]]
           printf 'Requested: %s\nChecked out: %s\nWorkflow: %s\n' "$TARGET_SHA" "$actual" "$GITHUB_SHA" | tee proof-logs/identity.log
 
       - name: Check out fork-only proof driver
@@ -97,15 +99,38 @@ jobs:
           grep -Fq 'Suite GatewayConnectionControlTests passed' proof-logs/control-tests.log
           grep -Eq 'Test run with [1-9][0-9]* tests' proof-logs/control-tests.log
 
-      - name: Build Gateway and actual Mac app
+      - name: Check out red-control revision
         if: ${{ inputs.ui_proof }}
         shell: bash
         run: |
           set -euo pipefail
-          pnpm build:runtime 2>&1 | tee proof-logs/gateway-build.log
-          swift build --package-path apps/macos --build-system native --product OpenClaw 2>&1 | tee proof-logs/app-build.log
+          git checkout --detach 1299676aacb6230a0960bd4f2178fb7ddd103849
+          [[ "$(git rev-parse HEAD)" == "1299676aacb6230a0960bd4f2178fb7ddd103849" ]]
 
-      - name: Prove live Mac chat accent change
+      - name: Restore red-control Mac app build
+        if: ${{ inputs.ui_proof }}
+        id: base-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: apps/macos/.build
+          key: mac-accent-app-macos-26-1299676aacb6230a0960bd4f2178fb7ddd103849-${{ hashFiles('apps/macos/Package.resolved') }}
+
+      - name: Build red-control Gateway and Mac app
+        if: ${{ inputs.ui_proof }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          pnpm build:runtime 2>&1 | tee proof-logs/base-gateway-build.log
+          swift build --package-path apps/macos --build-system native --product OpenClaw 2>&1 | tee proof-logs/base-app-build.log
+
+      - name: Save red-control Mac app build
+        if: ${{ inputs.ui_proof && steps.base-cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v4
+        with:
+          path: apps/macos/.build
+          key: mac-accent-app-macos-26-1299676aacb6230a0960bd4f2178fb7ddd103849-${{ hashFiles('apps/macos/Package.resolved') }}
+
+      - name: Require live red control
         if: ${{ inputs.ui_proof }}
         shell: bash
         run: |
@@ -113,8 +138,53 @@ jobs:
           node proof-driver/.github/proof/mac-accent/drive.mjs \
             "$PWD" \
             "$PWD/proof-driver/.github/proof/mac-accent" \
-            "$PWD/proof-logs/live-app" \
-            2>&1 | tee proof-logs/live-app-run.log
+            "$PWD/proof-logs/red-control" red \
+            2>&1 | tee proof-logs/red-control-run.log
+          node -e 'const r=require("./proof-logs/red-control/result.json");if(r.status!=="expected-failure"||r.head!=="1299676aacb6230a0960bd4f2178fb7ddd103849")process.exit(1)'
+
+      - name: Restore exact PR revision
+        if: ${{ inputs.ui_proof }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          git checkout --detach 2d61f300b4e45639f1515d5e99610849ab3fa484
+          [[ "$(git rev-parse HEAD)" == "2d61f300b4e45639f1515d5e99610849ab3fa484" ]]
+          git diff --name-only 1299676aacb6230a0960bd4f2178fb7ddd103849 HEAD | grep -v '^apps/macos/' > proof-logs/non-mac-changes.log || true
+          [[ ! -s proof-logs/non-mac-changes.log ]]
+
+      - name: Restore PR Mac app build
+        if: ${{ inputs.ui_proof }}
+        id: head-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: apps/macos/.build
+          key: mac-accent-app-macos-26-2d61f300b4e45639f1515d5e99610849ab3fa484-${{ hashFiles('apps/macos/Package.resolved') }}
+
+      - name: Build PR Mac app against the identical Gateway runtime
+        if: ${{ inputs.ui_proof }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          swift build --package-path apps/macos --build-system native --product OpenClaw 2>&1 | tee proof-logs/head-app-build.log
+
+      - name: Save PR Mac app build
+        if: ${{ inputs.ui_proof && steps.head-cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v4
+        with:
+          path: apps/macos/.build
+          key: mac-accent-app-macos-26-2d61f300b4e45639f1515d5e99610849ab3fa484-${{ hashFiles('apps/macos/Package.resolved') }}
+
+      - name: Require live green result
+        if: ${{ inputs.ui_proof }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          node proof-driver/.github/proof/mac-accent/drive.mjs \
+            "$PWD" \
+            "$PWD/proof-driver/.github/proof/mac-accent" \
+            "$PWD/proof-logs/green-head" green \
+            2>&1 | tee proof-logs/green-head-run.log
+          node -e 'const r=require("./proof-logs/green-head/result.json");if(r.status!=="passed"||r.head!=="2d61f300b4e45639f1515d5e99610849ab3fa484")process.exit(1)'
 
       - name: Upload complete proof logs
         if: always()

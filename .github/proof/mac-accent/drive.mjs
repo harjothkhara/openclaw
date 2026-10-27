@@ -9,7 +9,8 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { promisify } from "node:util";
 
 const execute = promisify(execFile);
-const [repoArg, driverArg, outputArg] = process.argv.slice(2);
+const [repoArg, driverArg, outputArg, expected] = process.argv.slice(2);
+assert(["red", "green"].includes(expected), "Expected red or green proof arm");
 assert.equal(process.platform, "darwin");
 assert.equal(process.env.GITHUB_ACTIONS, "true");
 assert.equal(process.env.RUNNER_ENVIRONMENT, "github-hosted");
@@ -45,6 +46,7 @@ const owned = [];
 const transcript = [];
 let outcome = { status: "failed" };
 let keychain;
+let unifiedLog;
 
 function redact(value) {
   return value.replaceAll(token, "<ephemeral-token>").replaceAll(root, "<proof-root>");
@@ -138,12 +140,17 @@ async function ui(mode, pid) {
 }
 async function screenshot(name) {
   const file = path.join(output, name + ".png");
-  await run("/usr/sbin/screencapture", ["-x", file]);
+  const { stdout } = await run("swift", [path.join(driver, "window.swift"), String(appPid)]);
+  const window = JSON.parse(stdout.trim());
+  assert.equal(window.title, "OpenClaw Chat");
+  assert(window.width >= 300 && window.height >= 250, "Chat window bounds are implausible");
+  await run("/usr/sbin/screencapture", ["-x", "-l", String(window.id), file]);
   assert((await fs.stat(file)).size > 1000);
-  record("screenshot", { name });
+  record("screenshot", { name, window });
   return file;
 }
 
+let appPid;
 try {
   await ui("preflight", 0);
   const listener = createServer();
@@ -216,15 +223,26 @@ try {
     ],
     "app",
   );
-  await waitFor("Mac app connected to real Gateway", () =>
-    gateway.logs
-      .split("\n")
-      .some(
-        (line) =>
-          line.includes("[ws] client connected") &&
-          line.includes("client=openclaw-macos") &&
-          line.includes("mode=ui"),
-      ),
+  appPid = app.child.pid;
+  unifiedLog = start(
+    "/usr/bin/log",
+    ["stream", "--style", "compact", "--predicate", `processID == ${appPid}`],
+    "app-unified-log",
+  );
+  // A logging process may exit independently of the app and Gateway.
+  owned.pop();
+  await waitFor(
+    "Mac app connected to real Gateway",
+    () =>
+      gateway.logs
+        .split("\n")
+        .some(
+          (line) =>
+            line.includes("[ws] client connected") &&
+            line.includes("client=openclaw-macos") &&
+            line.includes("mode=ui"),
+        ),
+    90000,
   );
   await waitFor("native chat window", async () => {
     try {
@@ -253,21 +271,29 @@ try {
   assert(afterState.draftVisible, "Chat draft disappeared after config patch");
   const after = await screenshot("02-green-chat");
   const pixels = await run("swift", [path.join(driver, "pixels.swift"), before, after], 120000);
-  record("pixel-contrast", { output: pixels.stdout.trim() });
+  const verdict = JSON.parse(pixels.stdout.trim());
+  record("pixel-contrast", verdict);
+  assert.equal(verdict.validImages, true, "Blank or black chat screenshot");
+  if (expected === "green") {
+    assert.equal(verdict.changed, true, "Chat accent did not change from magenta to green");
+  } else {
+    assert.equal(verdict.changed, false, "Base unexpectedly passed the positive accent proof");
+    assert(verdict.after.green < 40, "Base chat gained a green accent after patch");
+  }
   const head = (await execute("git", ["rev-parse", "HEAD"], { cwd: repo })).stdout.trim();
   outcome = {
-    status: "passed",
+    status: expected === "green" ? "passed" : "expected-failure",
     head,
     port: "<ephemeral>",
-    pixelContrast: pixels.stdout.trim(),
+    pixelContrast: verdict,
     noChatSent: true,
   };
-  record("proof-passed", outcome);
+  record("proof-verdict", outcome);
 } catch (error) {
   outcome.error = redact(String(error));
   record("proof-failed", { error: outcome.error });
 } finally {
-  for (const entry of [...owned].reverse()) {
+  for (const entry of [...owned, ...(unifiedLog ? [unifiedLog] : [])].reverse()) {
     if (entry.child.pid && entry.child.exitCode === null && entry.child.signalCode === null) {
       try {
         process.kill(-entry.child.pid, "SIGTERM");
@@ -301,4 +327,4 @@ try {
   if (!outcome.cleanupError) await fs.rm(root, { recursive: true, force: true });
 }
 console.log(JSON.stringify(outcome, null, 2));
-if (outcome.status !== "passed") process.exitCode = 1;
+if (!["passed", "expected-failure"].includes(outcome.status)) process.exitCode = 1;
