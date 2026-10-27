@@ -48,6 +48,8 @@ const env = {
   LC_ALL: "en_US.UTF-8",
   CI: "true",
   GITHUB_ACTIONS: "true",
+  GITHUB_REPOSITORY: process.env.GITHUB_REPOSITORY,
+  RUNNER_ENVIRONMENT: process.env.RUNNER_ENVIRONMENT,
   RUNNER_OS: "macOS",
   OPENCLAW_PROFILE: profile,
   OPENCLAW_STATE_DIR: state,
