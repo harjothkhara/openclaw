@@ -366,23 +366,16 @@ try {
   await waitFor(
     "app connected to the selected real Gateway",
     async () => {
-      try {
-        const { stdout } = await run(
-          path.join(repo, "apps/macos/.build/debug/openclaw-mac"),
-          ["status", "--no-launch", "--json", "--timeout", "3000"],
-          5000,
+      const connected = gateway.logs
+        .split("\n")
+        .some(
+          (line) =>
+            line.includes("[ws] client connected") &&
+            line.includes("client=openclaw-macos") &&
+            line.includes("mode=ui"),
         );
-        const status = JSON.parse(stdout);
-        if (
-          status.primary.connection.state !== "connected" ||
-          status.primary.url !== "ws://127.0.0.1:" + port
-        )
-          return false;
-        record("app-status", { status });
-        return true;
-      } catch {
-        return false;
-      }
+      if (connected) record("app-gateway-connected", { port });
+      return connected;
     },
     45000,
   );
