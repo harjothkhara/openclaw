@@ -46,6 +46,13 @@ struct GatewayUserPreferencesTests {
         let response = Data(#"{"status":"ok","entries":{"ui.accent":"theme"}}"#.utf8)
 
         #expect(try GatewayUserPreferences.decodeProfileAccent(response) == .theme)
+        #expect(try GatewayUserPreferences.decodeProfileAccentHex(response) == nil)
+    }
+
+    @Test func `iOS hex projection retains its existing result`() throws {
+        let response = Data(##"{"status":"ok","entries":{"ui.accent":"#A1B2C3"}}"##.utf8)
+
+        #expect(try GatewayUserPreferences.decodeProfileAccentHex(response) == "#a1b2c3")
     }
 
     @Test(arguments: [

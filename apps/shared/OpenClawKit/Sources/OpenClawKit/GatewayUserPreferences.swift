@@ -32,4 +32,12 @@ public enum GatewayUserPreferences {
         guard let hex = self.normalizedAccentHex(raw) else { return .inherited }
         return .color(hex)
     }
+
+    /// iOS still consumes only hex accents; preserve its established projection.
+    public static func decodeProfileAccentHex(_ data: Data) throws -> String? {
+        switch try self.decodeProfileAccent(data) {
+        case let .color(hex): hex
+        case .inherited, .theme: nil
+        }
+    }
 }
