@@ -269,7 +269,7 @@ try {
   );
   await sleep(1000);
   const accentSamples = () =>
-    (app.logs + "\n" + (unifiedLog?.logs ?? ""))
+    (app.logs.includes("MAC_ACCENT_PROOF accent=") ? app.logs : (unifiedLog?.logs ?? ""))
       .split("\n")
       .filter((line) => line.includes("MAC_ACCENT_PROOF accent="))
       .map((line) => ({
@@ -281,9 +281,10 @@ try {
   );
   const beforeSamples = accentSamples();
   record("chat-consumer-before", { samples: beforeSamples });
+  const latestAccent = (samples) => samples.filter((sample) => sample.native).at(-1)?.accent;
   if (expected === "green") {
     assert(
-      beforeSamples.some((s) => s.native && s.accent === "#e00070"),
+      latestAccent(beforeSamples) === "#e00070",
       "PR app did not consume the initial saved magenta accent",
     );
   }
@@ -311,7 +312,7 @@ try {
   }
   const afterSamples = accentSamples();
   record("chat-consumer-after", { samples: afterSamples });
-  const consumedGreen = afterSamples.some((s) => s.native && s.accent === "#00d070");
+  const consumedGreen = latestAccent(afterSamples) === "#00d070";
   const afterState = JSON.parse(await ui("inspect", app.child.pid));
   assert(
     afterState.draftVisible && afterState.sendEnabled,
