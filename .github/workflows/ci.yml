@@ -73,6 +73,8 @@ jobs:
           /usr/bin/perl -e 'alarm 15; exec @ARGV' /usr/bin/osascript -l JavaScript \
             -e 'var se = Application("System Events"); var p = se.processes(); if (p.length < 1) throw Error("No accessible GUI processes"); p.length' \
             > /dev/null
+          [[ "$(/usr/bin/perl -e 'alarm 15; exec @ARGV' /usr/bin/osascript \
+            -e 'tell application "System Events" to get UI elements enabled')" == true ]]
           /usr/bin/perl -e 'alarm 15; exec @ARGV' /usr/sbin/screencapture -x -t png "$GITHUB_WORKSPACE/gui-preflight.png"
           /usr/bin/sips -g pixelWidth -g pixelHeight "$GITHUB_WORKSPACE/gui-preflight.png" \
             > "$GITHUB_WORKSPACE/gui-preflight-dimensions.txt"
@@ -97,10 +99,11 @@ jobs:
           path: sut-red/apps/macos/.build
           key: mac-new-thread-package-macos-26-intel-${{ env.BASE_SHA }}-${{ hashFiles('sut-red/apps/macos/Package.resolved') }}
       - name: Run guarded real-app red control
+        timeout-minutes: 10
         shell: bash
         run: |
           set -euo pipefail
-          /usr/bin/perl -e 'alarm 600; exec @ARGV' node proof-runner/proof/new-thread.mjs \
+          node proof-runner/proof/new-thread.mjs \
             --source "$GITHUB_WORKSPACE/sut-red" --app "$GITHUB_WORKSPACE/sut-red/dist/OpenClaw.app" \
             --sha "$BASE_SHA" --mode red --out "$GITHUB_WORKSPACE/new-thread-red"
       - name: Release disposable base checkout
@@ -126,10 +129,11 @@ jobs:
           path: sut-green/apps/macos/.build
           key: mac-new-thread-package-macos-26-intel-${{ env.TARGET_SHA }}-${{ hashFiles('sut-green/apps/macos/Package.resolved') }}
       - name: Run guarded real-app green control
+        timeout-minutes: 10
         shell: bash
         run: |
           set -euo pipefail
-          /usr/bin/perl -e 'alarm 600; exec @ARGV' node proof-runner/proof/new-thread.mjs \
+          node proof-runner/proof/new-thread.mjs \
             --source "$GITHUB_WORKSPACE/sut-green" --app "$GITHUB_WORKSPACE/sut-green/dist/OpenClaw.app" \
             --sha "$TARGET_SHA" --mode green --out "$GITHUB_WORKSPACE/new-thread-green"
       - name: Require exact-head red and green verdicts
