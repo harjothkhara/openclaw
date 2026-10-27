@@ -235,13 +235,17 @@ async function external(marker) {
 }
 
 async function press(marker, button) {
+  const id = "approval-proof-" + marker;
+  const pending = await rpc("exec.approval.get", { id });
+  assert.equal(pending.id, id, "Native shortcut requires the exact pending approval");
+  assert(pending.expiresAtMs > Date.now(), "Approval expired before native shortcut");
   const result = await run("/usr/bin/osascript", [
     "-l",
     "JavaScript",
     ui,
     "press",
     String(app.child.pid),
-    "approval-proof-" + marker,
+    id,
     button,
   ]);
   record("native-press", {

@@ -121,29 +121,46 @@ function run(args) {
   if (mode === "press" && args.length === 4) {
     var marker = args[2];
     var title = args[3];
+    if (title !== "Allow Once" || marker !== "approval-proof-sentinel") {
+      throw new Error("Only the synthetic sentinel's Allow Once shortcut is supported");
+    }
     var matches = [];
     app.windows().forEach(function (window) {
       if (attribute(window, "AXTitle") !== "OpenClaw Command Approval") return;
       var nodes = descendants(window, 0, { left: 5000 });
       if (
-        !text(nodes).some(function (value) {
+        text(nodes).some(function (value) {
           return value.indexOf(marker) >= 0;
         })
-      )
-        return;
-      nodes.forEach(function (node) {
-        if (attribute(node, "AXRole") === "AXButton" && text([node]).indexOf(title) >= 0) {
-          matches.push(node);
-        }
-      });
+      ) {
+        matches.push(window);
+      }
     });
     if (matches.length !== 1) {
-      throw new Error(
-        "Expected one native button on the matching approval, found " + matches.length,
-      );
+      throw new Error("Expected one native sentinel approval window, found " + matches.length);
     }
-    matches[0].click();
-    return "Pressed native " + title + " for " + marker;
+    app.frontmost = true;
+    var raise = matches[0].actions.byName("AXRaise");
+    if (!raise.exists()) throw new Error("Native approval window cannot be raised");
+    raise.perform();
+
+    // System Events sends keys to the frontmost window, so fail closed unless
+    // a fresh focused-window read still identifies this exact synthetic request.
+    var focused = app.windows().filter(function (window) {
+      return attribute(window, "AXFocused") === true;
+    });
+    if (
+      !app.frontmost() ||
+      focused.length !== 1 ||
+      attribute(focused[0], "AXTitle") !== "OpenClaw Command Approval" ||
+      !text(descendants(focused[0], 0, { left: 5000 })).some(function (value) {
+        return value.indexOf(marker) >= 0;
+      })
+    ) {
+      throw new Error("Synthetic approval panel is not the focused frontmost window");
+    }
+    systemEvents.keyCode(36, { using: ["command down"] });
+    return "Sent native Command-Return for " + marker + " in focused app PID " + pid;
   }
 
   throw new Error("Expected preflight, watch PID, or press PID MARKER BUTTON");
