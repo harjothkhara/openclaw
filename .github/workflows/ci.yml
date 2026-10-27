@@ -1,5 +1,5 @@
 name: Mac chat accent proof
-run-name: PR 185529 native tests / ${{ inputs.target_sha }}
+run-name: PR 185529 ${{ inputs.ui_proof && 'UI' || 'native tests' }} / ${{ inputs.target_sha }}
 
 on:
   workflow_dispatch:
@@ -9,6 +9,11 @@ on:
         required: true
         type: string
         default: ""
+      ui_proof:
+        description: Run isolated real-app UI proof; exact-head native tests already passed
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -40,11 +45,13 @@ jobs:
           printf 'Requested: %s\nChecked out: %s\nWorkflow: %s\n' "$TARGET_SHA" "$actual" "$GITHUB_SHA" | tee proof-logs/identity.log
 
       - name: Check out fork-only proof driver
+        if: ${{ inputs.ui_proof }}
         uses: actions/checkout@v4
         with:
           repository: harjothkhara/openclaw
           ref: proof/mac-accent-128922-2026-10-27
           path: proof-driver
+          sparse-checkout: .github/proof/mac-accent
           persist-credentials: false
 
       - name: Set up pnpm
@@ -70,12 +77,14 @@ jobs:
           node scripts/prepare-apple-mermaid.mjs 2>&1 | tee proof-logs/assets.log
 
       - name: Build macOS test bundle
+        if: ${{ !inputs.ui_proof }}
         shell: bash
         run: |
           set -euo pipefail
           swift build --package-path apps/macos --build-system native --build-tests 2>&1 | tee proof-logs/build.log
 
       - name: Run Mac control connection regressions
+        if: ${{ !inputs.ui_proof }}
         shell: bash
         run: |
           set -euo pipefail
@@ -88,7 +97,16 @@ jobs:
           grep -Fq 'Suite GatewayConnectionControlTests passed' proof-logs/control-tests.log
           grep -Eq 'Test run with [1-9][0-9]* tests' proof-logs/control-tests.log
 
+      - name: Build Gateway and actual Mac app
+        if: ${{ inputs.ui_proof }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          pnpm build:runtime 2>&1 | tee proof-logs/gateway-build.log
+          swift build --package-path apps/macos --build-system native --product OpenClaw 2>&1 | tee proof-logs/app-build.log
+
       - name: Prove live Mac chat accent change
+        if: ${{ inputs.ui_proof }}
         shell: bash
         run: |
           set -euo pipefail
