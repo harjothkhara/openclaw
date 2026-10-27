@@ -70,16 +70,18 @@ struct ExecApprovalPromptLayoutTests {
     }
 
     @Test func `pending approval refuses computer input before permissions or dispatch`() async throws {
-        let reservation = try #require(ExecApprovalsPromptPresenter.reservePromptForTesting())
-        defer { ExecApprovalsPromptPresenter.releasePromptForTesting(id: reservation) }
+        try await TestIsolation.withIsolatedState {
+            let reservation = try #require(ExecApprovalsPromptPresenter.reservePromptForTesting())
+            defer { ExecApprovalsPromptPresenter.releasePromptForTesting(id: reservation) }
 
-        for action in [OpenClawComputerAction.leftClick, .key, .setValue] {
-            do {
-                _ = try await ComputerActionService().perform(
-                    OpenClawComputerActParams(action: action), lifecycleGeneration: 0)
-                Issue.record("Expected human approval to refuse computer input")
-            } catch let ComputerActionService.ComputerActionError.refused(message) {
-                #expect(message == "A human approval prompt is open on this Mac; wait for the user to answer it")
+            for action in [OpenClawComputerAction.leftClick, .key, .setValue] {
+                do {
+                    _ = try await ComputerActionService().perform(
+                        OpenClawComputerActParams(action: action), lifecycleGeneration: 0)
+                    Issue.record("Expected human approval to refuse computer input")
+                } catch let ComputerActionService.ComputerActionError.refused(message) {
+                    #expect(message == "A human approval prompt is open on this Mac; wait for the user to answer it")
+                }
             }
         }
     }
