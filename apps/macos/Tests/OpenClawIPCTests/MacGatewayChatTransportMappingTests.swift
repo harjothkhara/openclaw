@@ -208,6 +208,7 @@ struct MacGatewayChatTransportMappingTests {
                     params?["agentId"] as? String == "agent-a"
                         ? #"{"key":"global","entry":{"sessionId":"global-a","pinnedAt":10,"updatedAt":11}}"#
                         : #"{"key":"global","entry":{"sessionId":"global-b","color":null,"updatedAt":12}}"#
+                case "sessions.create": #"{"key":"agent:research:created"}"#
                 case "sessions.rewind": #"{"editorText":"rewound draft"}"#
                 case "sessions.fork": #"{"sessionKey":"forked","editorText":"continued draft"}"#
                 case "sessions.list":
@@ -228,7 +229,7 @@ struct MacGatewayChatTransportMappingTests {
                     mainSessionKey: mainSessionKey,
                     methods: [
                         "agents.list", "agent.identity.get", "sessions.patch", "sessions.delete", "sessions.rewind",
-                        "sessions.fork", "sessions.list", "sessions.search",
+                        "sessions.create", "sessions.fork", "sessions.list", "sessions.search",
                     ],
                     capabilities: capabilities))
             })
@@ -355,6 +356,36 @@ struct MacGatewayChatTransportMappingTests {
                 try #require(JSONSerialization.jsonObject(with: $0) as? [String: Any])
             }
             #expect(requests.filter { $0["method"] as? String == "chat.send" }.count == 3)
+        }
+    }
+
+    @Test func explicitSessionCreationUsesCapturedGateway() async throws {
+        try await self.withSessionTransport { base, recorder in
+            let transport: any OpenClawChatTransport = base
+            // Establish the existing creation owner before exercising the protocol witness.
+            let lease = try #require(await transport.acquireNewSessionRouteLease())
+            let leased = try await lease.createSession(
+                key: "agent:research:leased", label: "Research", agentID: "research",
+                parentSessionKey: "agent:research:parent", worktree: true, worktreeBaseRef: "main")
+            #expect(leased.key == "agent:research:created")
+            try #require(await recorder.snapshot().count == 1)
+
+            let created = try await transport.createSession(
+                key: "agent:research:direct", label: "Research", agentID: "research",
+                parentSessionKey: "agent:research:parent", worktree: true, worktreeBaseRef: "main")
+            #expect(created.key == "agent:research:created")
+            let frames = try await recorder.snapshot().map {
+                try #require(JSONSerialization.jsonObject(with: $0) as? [String: Any])
+            }
+            #expect(frames.map { $0["method"] as? String } == ["sessions.create", "sessions.create"])
+            let params = try frames.map { try #require($0["params"] as? [String: Any]) }
+            try #require(params.count == 2)
+            for (index, key) in ["agent:research:leased", "agent:research:direct"].enumerated() {
+                #expect(NSDictionary(dictionary: params[index]).isEqual(to: [
+                    "key": key, "label": "Research", "agentId": "research",
+                    "parentSessionKey": "agent:research:parent", "worktree": true, "worktreeBaseRef": "main",
+                ]))
+            }
         }
     }
 
