@@ -708,11 +708,11 @@ final class ControlChannel {
     private func refreshProfileAccent(delivery: GatewayConnection.PushDelivery) {
         Task {
             guard delivery.isCurrent else { return }
-            let accent = await self.fetchProfileAccentHex(serverLease: delivery.serverLease)
+            let accent = await self.fetchProfileAccent(serverLease: delivery.serverLease)
             // A replaced request can fail as well as succeed; neither outcome
             // may repaint the newly selected Gateway's profile appearance.
             guard delivery.isCurrent else { return }
-            AppStateStore.shared.profileAccentHex = accent
+            AppStateStore.shared.profileAccent = accent
         }
     }
 
@@ -737,22 +737,20 @@ final class ControlChannel {
         }
     }
 
-    /// Caller's per-profile accent (users.prefs.get). nil covers profile-less
-    /// connections (no_durable_identity), older gateways without the method,
-    /// and malformed stored values, so the gateway seam color stays the
-    /// fallback. Goes straight through GatewayConnection: routing this through
-    /// ControlChannel.request would mark the channel degraded on the expected
-    /// older-gateway failure.
-    private func fetchProfileAccentHex(serverLease: GatewayConnection.ServerLease) async -> String? {
+    /// Caller's per-profile accent (users.prefs.get). Inherited covers profile-less
+    /// connections, older gateways, and malformed values; explicit theme suppresses
+    /// the Gateway fallback. Request directly so an older Gateway does not degrade
+    /// the control channel when this optional method is unavailable.
+    private func fetchProfileAccent(serverLease: GatewayConnection.ServerLease) async -> GatewayUserPreferences.ProfileAccent {
         do {
             let data = try await self.gateway.request(
                 method: "users.prefs.get",
                 params: ["keys": OpenClawKit.AnyCodable(["ui.accent"])],
                 timeoutMs: 8000,
                 ifCurrentServerLease: serverLease)
-            return try GatewayUserPreferences.decodeProfileAccentHex(data)
+            return try GatewayUserPreferences.decodeProfileAccent(data)
         } catch {
-            return nil
+            return .inherited
         }
     }
 

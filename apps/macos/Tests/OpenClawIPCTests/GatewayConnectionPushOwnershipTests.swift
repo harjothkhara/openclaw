@@ -38,20 +38,20 @@ extension GatewayConnectionControlTests {
             let control = ControlChannel(gateway: connection, endpointRevision: { source.snapshot().revision! })
             let activity = WorkActivityStore.shared
             let previousKey = activity.mainSessionKey
-            let previousAccent = AppStateStore.shared.profileAccentHex
-            AppStateStore.shared.profileAccentHex = "#123456"
+            let previousAccent = AppStateStore.shared.profileAccent
+            AppStateStore.shared.profileAccent = .color("#123456")
             defer {
                 activity.reset()
                 activity.setMainSessionKey(previousKey)
-                AppStateStore.shared.profileAccentHex = previousAccent
+                AppStateStore.shared.profileAccent = previousAccent
             }
             _ = try await connection.request(method: "health", params: nil, retryTransportFailures: false)
             try await TestWait.observed("Gateway A main session") { activity.mainSessionKey == "a-main" }
             #expect(activity.mainSessionKey == "a-main")
             try await TestWait.observed("initial profile accent") {
-                AppStateStore.shared.profileAccentHex == nil
+                AppStateStore.shared.profileAccent == .inherited
             }
-            #expect(AppStateStore.shared.profileAccentHex == nil)
+            #expect(AppStateStore.shared.profileAccent == .inherited)
 
             let acknowledgement = UUID().uuidString
             let buffered = await connection.subscribe()
@@ -194,9 +194,10 @@ extension GatewayConnectionControlTests {
             ])))
     }
 
-    @Test(arguments: [true, false]) @MainActor
-    func `chat-only connection refreshes saved Gateway accent without overriding a profile`(profileless: Bool) async throws {
+    @Test(arguments: ["profileless", "color", "theme"]) @MainActor
+    func `chat-only connection refreshes saved Gateway accent without overriding a profile`(profile: String) async throws {
         try await TestIsolation.withIsolatedState {
+            let profileless = profile == "profileless"
             let source = GatewayConnectionEndpointSource(endpoint: GatewayConnection.EndpointSnapshot(
                 config: (URL(string: "ws://127.0.0.1:49229")!, nil, nil), routeAuthority: nil, revision: 1))
             let accent = LockIsolated<String?>("#aa0000")
@@ -221,9 +222,10 @@ extension GatewayConnectionControlTests {
                             "payload":{"status":"no_durable_identity"}}
                             """.utf8)
                         } else {
+                            let selected = profile == "theme" ? "theme" : "#123456"
                             response = Data("""
                             {"type":"res","id":"\(id)","ok":true,
-                            "payload":{"status":"ok","entries":{"ui.accent":"#123456"}}}
+                            "payload":{"status":"ok","entries":{"ui.accent":"\(selected)"}}}
                             """.utf8)
                         }
                     default:
@@ -239,37 +241,37 @@ extension GatewayConnectionControlTests {
             let control = ControlChannel(gateway: connection, endpointRevision: { source.snapshot().revision! })
             let state = AppStateStore.shared
             let previousSeam = state.seamColorHex
-            let previousProfile = state.profileAccentHex
+            let previousProfile = state.profileAccent
             defer {
                 state.seamColorHex = previousSeam
-                state.profileAccentHex = previousProfile
+                state.profileAccent = previousProfile
             }
             state.seamColorHex = nil
-            state.profileAccentHex = nil
+            state.profileAccent = .inherited
             _ = try await connection.request(method: "health", params: nil, retryTransportFailures: false)
             try await TestWait.observed("initial saved Gateway accent") { state.seamColorHex == "#aa0000" }
             try await TestWait.observed("profile accent") {
-                state.profileAccentHex == (profileless ? nil : "#123456")
+                state.profileAccent == (profileless ? .inherited : profile == "theme" ? .theme : .color("#123456"))
             }
-            #expect(state.effectiveAccentHex == (profileless ? "#aa0000" : "#123456"))
+            #expect(state.effectiveAccentHex == (profileless ? "#aa0000" : profile == "theme" ? nil : "#123456"))
 
             accent.withValue { $0 = "#00bb00" }
             await connection._test_handlePush(
                 .event(EventFrame(type: "event", event: "config.changed")), socketGeneration: 1)
             try await TestWait.observed("changed saved Gateway accent") { state.seamColorHex == "#00bb00" }
-            #expect(state.effectiveAccentHex == (profileless ? "#00bb00" : "#123456"))
+            #expect(state.effectiveAccentHex == (profileless ? "#00bb00" : profile == "theme" ? nil : "#123456"))
 
             accent.withValue { $0 = nil }
             await connection._test_handlePush(
                 .event(EventFrame(type: "event", event: "config.changed")), socketGeneration: 1)
             try await TestWait.observed("operator fallback") { state.seamColorHex == "#0055dd" }
-            #expect(state.effectiveAccentHex == (profileless ? "#0055dd" : "#123456"))
+            #expect(state.effectiveAccentHex == (profileless ? "#0055dd" : profile == "theme" ? nil : "#123456"))
 
             accent.withValue { $0 = "theme" }
             await connection._test_handlePush(
                 .event(EventFrame(type: "event", event: "config.changed")), socketGeneration: 1)
             try await TestWait.observed("theme default") { state.seamColorHex == nil }
-            #expect(state.effectiveAccentHex == (profileless ? nil : "#123456"))
+            #expect(state.effectiveAccentHex == (profile == "color" ? "#123456" : nil))
             await control.disconnect()
         }
     }
@@ -372,12 +374,12 @@ extension GatewayConnectionControlTests {
                 sessionBox: WebSocketSessionBox(session: session))
             let control = ControlChannel(gateway: connection, endpointRevision: { source.snapshot().revision! })
             let state = AppStateStore.shared
-            let previousAccent = state.profileAccentHex
-            defer { state.profileAccentHex = previousAccent }
-            state.profileAccentHex = "#123456"
+            let previousAccent = state.profileAccent
+            defer { state.profileAccent = previousAccent }
+            state.profileAccent = .color("#123456")
             _ = try await connection.request(method: "health", params: nil, retryTransportFailures: false)
-            try await TestWait.observed("initial profile accent") { state.profileAccentHex == nil }
-            #expect(state.profileAccentHex == nil)
+            try await TestWait.observed("initial profile accent") { state.profileAccent == .inherited }
+            #expect(state.profileAccent == .inherited)
 
             deferAccent.withValue { $0 = true }
             await connection._test_handlePush(
@@ -385,15 +387,15 @@ extension GatewayConnectionControlTests {
             await gate.waitUntilStarted()
             source.setEndpoint(GatewayConnection.EndpointSnapshot(
                 config: (URL(string: "ws://127.0.0.1:49228")!, nil, nil), routeAuthority: nil, revision: 2))
-            state.profileAccentHex = "#0000bb"
+            state.profileAccent = .color("#0000bb")
             await gate.open()
             let deadline = ContinuousClock.now + .seconds(2)
-            while state.profileAccentHex == "#0000bb", ContinuousClock.now < deadline {
+            while state.profileAccent == .color("#0000bb"), ContinuousClock.now < deadline {
                 try await Task.sleep(for: .milliseconds(10))
             }
             try await replyRecorded.wait("retired profile accent response") { replied.value }
             #expect(replied.value)
-            #expect(state.profileAccentHex == "#0000bb")
+            #expect(state.profileAccent == .color("#0000bb"))
             await control.disconnect()
         }
     }

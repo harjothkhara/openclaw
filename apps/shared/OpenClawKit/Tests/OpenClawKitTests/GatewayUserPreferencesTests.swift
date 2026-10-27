@@ -39,7 +39,13 @@ struct GatewayUserPreferencesTests {
     @Test func `profile accent reads its entry without rejecting unrelated fields`() throws {
         let response = Data(##"{"status":"ok","entries":{"ui.accent":"#A1B2C3","ui.theme":"dark"},"extra":true}"##.utf8)
 
-        #expect(try GatewayUserPreferences.decodeProfileAccentHex(response) == "#a1b2c3")
+        #expect(try GatewayUserPreferences.decodeProfileAccent(response) == .color("#a1b2c3"))
+    }
+
+    @Test func `explicit profile theme suppresses the Gateway accent`() throws {
+        let response = Data(#"{"status":"ok","entries":{"ui.accent":"theme"}}"#.utf8)
+
+        #expect(try GatewayUserPreferences.decodeProfileAccent(response) == .theme)
     }
 
     @Test(arguments: [
@@ -52,7 +58,7 @@ struct GatewayUserPreferencesTests {
         #"{"status":"ok","entries":{"ui.accent":null}}"#,
     ])
     func `profile accent rejects missing or malformed entries`(payload: String) throws {
-        #expect(try GatewayUserPreferences.decodeProfileAccentHex(Data(payload.utf8)) == nil)
+        #expect(try GatewayUserPreferences.decodeProfileAccent(Data(payload.utf8)) == .inherited)
     }
 
     @Test(arguments: [
@@ -62,13 +68,13 @@ struct GatewayUserPreferencesTests {
         ##"[{"status":"ok","entries":{"ui.accent":"#123456"}}]"##,
     ])
     func `only an ok profile response can supply an accent`(payload: String) throws {
-        #expect(try GatewayUserPreferences.decodeProfileAccentHex(Data(payload.utf8)) == nil)
+        #expect(try GatewayUserPreferences.decodeProfileAccent(Data(payload.utf8)) == .inherited)
     }
 
     @Test(arguments: ["", "{"])
     func `malformed JSON preserves the callers error path`(payload: String) {
         #expect(throws: Error.self) {
-            try GatewayUserPreferences.decodeProfileAccentHex(Data(payload.utf8))
+            try GatewayUserPreferences.decodeProfileAccent(Data(payload.utf8))
         }
     }
 }
