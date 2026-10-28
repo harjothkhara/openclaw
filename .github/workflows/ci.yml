@@ -57,7 +57,7 @@ jobs:
           [[ "$(git -C sut-green rev-parse HEAD)" == "$TARGET_SHA" ]]
           branch_sha="$(git ls-remote https://github.com/openclaw/openclaw.git refs/heads/openclaw/marine-crayfish-3 | cut -f1)"
           [[ "$branch_sha" == "$TARGET_SHA" ]]
-          echo 'f82ecd9f80cccbe1912cdeb236d3c27ef333772360549ca9b1da15953cd2e7af  proof-runner/proof/new-thread.mjs' | shasum -a 256 -c
+          echo '1f7df0c9f83982aa65f456b65de7083629d4a2dcd67a8a2f0b2c169b39657edb  proof-runner/proof/new-thread.mjs' | shasum -a 256 -c
           echo '3f60813567c8e930841c6dbecace19b855ce38722185741f9dc9a77101e10744  proof-runner/proof/new-thread-ax.js' | shasum -a 256 -c
           echo '068760c364e61beb36cb02341a42f51f7829085dc1e7f953af333a2265c2713f  proof-runner/proof/new-thread-window.swift' | shasum -a 256 -c
           node --check proof-runner/proof/new-thread.mjs

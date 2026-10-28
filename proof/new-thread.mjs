@@ -20,6 +20,51 @@ export function observedResponse(request, frame) {
   };
 }
 
+// Base recursion is in protocol defaults, before the RPC builder. Zero wire requests
+// is corroboration only; acknowledged action, positive stacks/growth and unchanged
+// durable sessions are all required. A deadline alone never qualifies as red.
+export function requireRecursiveRed({
+  click,
+  guard,
+  stackCounts,
+  metrics,
+  baseline,
+  rows,
+  beforeKeys,
+  after,
+}) {
+  assert.equal(click?.clicked, true, "Missing acknowledged native action");
+  assert.ok(Number.isFinite(click.pressedAt) && click.returnedAt >= click.pressedAt);
+  assert.ok(guard && guard.at >= click.pressedAt, "No post-action watchdog stop");
+  assert.ok(["rss-growth", "vsz-growth", "rss-ceiling", "action-deadline"].includes(guard.reason));
+  assert.ok(
+    stackCounts.length === 2 && stackCounts.every((n) => n >= 2),
+    "Missing original recursive stack signature",
+  );
+  assert.ok(
+    metrics.some(
+      (m) =>
+        m.t >= click.pressedAt &&
+        m.t <= guard.at &&
+        (m.rssKiB - baseline.rssKiB > 64 * 1024 || m.vszKiB - baseline.vszKiB > 128 * 1024),
+    ),
+    "No post-action allocating growth observed",
+  );
+  assert.equal(
+    rows.filter((r) => r.t >= click.pressedAt && r.side === "req" && r.method === "sessions.create")
+      .length,
+    0,
+    "Recursive base must not reach sessions.create RPC",
+  );
+  assert.ok(Array.isArray(after.sessions), "Missing authoritative post-action session list");
+  assert.deepEqual(
+    after.sessions.map((r) => r.key).sort(),
+    [...beforeKeys].sort(),
+    "Base unexpectedly changed durable session keys",
+  );
+  return { kind: "native-recursion-before-rpc", createRequests: 0, durableSessionsUnchanged: true };
+}
+
 export function correlate(rows, since) {
   const creates = rows.filter(
     (r) => r.t >= since && r.side === "req" && r.method === "sessions.create",
@@ -927,23 +972,16 @@ async function main() {
         "OpenClawChatGatewayTransport.createSession",
         "OpenClawChatTransport.createSession",
       ].map((symbol) => sampleText.split(symbol).length - 1);
-      assert.ok(
-        report.redStackCounts.every((count) => count >= 2),
-        "Missing repeated original recursive stack",
-      );
-      assert.ok(
-        metrics.some(
-          (m) =>
-            m.rssKiB - appBaseline.rssKiB > 64 * 1024 || m.vszKiB - appBaseline.vszKiB > 128 * 1024,
-        ),
-        "No allocating growth observed",
-      );
-      assert.equal(
-        records.filter(
-          (r) => r.t >= clickedAt && r.method === "sessions.create" && r.side === "req",
-        ).length,
-        0,
-      );
+      report.redBoundary = requireRecursiveRed({
+        click,
+        guard,
+        stackCounts: report.redStackCounts,
+        metrics,
+        baseline: appBaseline,
+        rows: records,
+        beforeKeys,
+        after: await call("sessions.list", { limit: 200 }),
+      });
       report.status = "expected-red";
       report.guard = guard;
     } else {
