@@ -5,10 +5,10 @@ on:
   workflow_dispatch:
     inputs:
       live_attempt:
-        description: Codex live-app slot (third slot authorized after two harness failures; admission-only failure does not count)
+        description: Codex serial live-app slot (fourth authorized after synthetic-helper overflow; admission-only failure does not count)
         required: true
         type: choice
-        options: ["1", "2", "3"]
+        options: ["1", "2", "3", "4"]
       serial_confirmed:
         description: Codex verified no other Mac proof queued/running and ledger permits this attempt
         required: true
@@ -32,7 +32,7 @@ jobs:
           script: |
             if (context.repo.owner !== 'harjothkhara' || context.repo.repo !== 'openclaw' || context.ref !== 'refs/heads/proof/mac-accent-128922-2026-10-27') throw Error('Wrong fork/ref');
             if (context.payload.inputs.serial_confirmed !== 'true') throw Error('Codex serial/attempt ledger confirmation required');
-            if (!['1','2','3'].includes(context.payload.inputs.live_attempt)) throw Error('Invalid live-attempt slot');
+            if (!['1','2','3','4'].includes(context.payload.inputs.live_attempt)) throw Error('Invalid live-attempt slot');
             const repo = context.repo;
             const current = (await github.rest.actions.getWorkflowRun({...repo,run_id:context.runId})).data;
             if (current.run_attempt !== 1) throw Error('Do not rerun jobs; a new authorized dispatch consumes the next ledger slot');
@@ -61,9 +61,13 @@ jobs:
               if (run.id === context.runId) continue;
               const jobs = (await github.rest.actions.listJobsForWorkflowRun({...repo,run_id:run.id,per_page:100})).data;
               if (jobs.total_count > 100) throw Error('Proof job history query incomplete');
-              if (jobs.jobs.some(j => j.name === 'accent' && j.conclusion !== 'skipped')) liveAttempts++;
+              // Preserve the previously charged synthetic-preflight slot, but a new
+              // failure before packaging either app does not consume live-app proof.
+              const legacyCharged = run.id === 40591157706 && jobs.jobs.some(j => j.name === 'accent' && j.conclusion !== 'skipped');
+              const enteredAppBuild = jobs.jobs.some(j => j.name === 'accent' && j.steps?.some(s => s.name === 'Package red source without modifications' && s.status !== 'queued' && s.conclusion !== 'skipped'));
+              if (legacyCharged || enteredAppBuild) liveAttempts++;
             }
-            if (liveAttempts >= 3 || liveAttempts + 1 !== Number(context.payload.inputs.live_attempt)) throw Error('Three live-app attempt budget/ledger mismatch');
+            if (liveAttempts >= 4 || liveAttempts + 1 !== Number(context.payload.inputs.live_attempt)) throw Error('Four live-app attempt budget/ledger mismatch');
             const pr = (await github.rest.pulls.get({owner:'openclaw',repo:'openclaw',pull_number:185529})).data;
             if (pr.head.sha !== 'b34033c907786da68f99e5006d0feb2bf8793b7f' || !pr.draft) throw Error('Pinned draft PR changed');
   accent:
@@ -116,6 +120,50 @@ jobs:
           # Compilation/TCC must fail before either expensive app build.
           xcrun swiftc window.swift -o "$RUNNER_TEMP/accent-window-helper"
           "$RUNNER_TEMP/accent-window-helper" preflight
+          # Exercise the actual compiled pixel helper before packaging either app.
+          # Its output is synthetic; bound and diagnose it here, not after a 47-minute build.
+          python3 - <<'PY'
+          import json, os, pathlib, subprocess, sys
+          helper = pathlib.Path(os.environ['RUNNER_TEMP']) / 'accent-window-helper'
+          fixtures = pathlib.Path(os.environ['RUNNER_TEMP']) / ('accent-fixtures-' + os.environ['GITHUB_RUN_ID'])
+          env = {key: os.environ[key] for key in ('PATH', 'HOME', 'USER', 'LOGNAME', 'TMPDIR', 'LANG', '__CF_USER_TEXT_ENCODING', 'RUNNER_TRACKING_ID') if os.environ.get(key)}
+          env.update(LANG='en_US.UTF-8', CI='true', NO_COLOR='1', NSUnbufferedIO='YES')
+          def prefix(value):
+              result = (value or b'').decode('utf-8', errors='replace')
+              for key in ('HOME', 'GITHUB_WORKSPACE', 'RUNNER_TEMP'):
+                  path = os.environ.get(key)
+                  if path:
+                      result = result.replace(path, '[' + key + ']')
+              return result[:500]
+          try:
+              result = subprocess.run([str(helper), 'selftest', str(fixtures)], capture_output=True, timeout=120,
+                                      cwd=os.path.join(os.environ['GITHUB_WORKSPACE'], 'sut-red'), env=env)
+          except subprocess.TimeoutExpired as exc:
+              print('Pixel helper selftest timed out; stdout/stderr bytes:', len(exc.stdout or b''), len(exc.stderr or b''))
+              print('Synthetic helper stderr prefix:', prefix(exc.stderr))
+              sys.exit(1)
+          if result.returncode or len(result.stdout) > 8192 or len(result.stderr) > 65536:
+              print('Pixel helper selftest failed; code/stdout/stderr bytes:', result.returncode, len(result.stdout), len(result.stderr))
+              print('Synthetic helper stderr prefix:', prefix(result.stderr))
+              sys.exit(1)
+          values = json.loads(result.stdout)
+          if set(values) != {'magenta', 'green', 'black', 'white'}:
+              raise SystemExit('Pixel helper selftest returned incomplete fixtures')
+          (pathlib.Path(os.environ['RUNNER_TEMP']) / 'accent-fixtures.json').write_bytes(result.stdout)
+          print('Pixel helper selftest passed; stdout/stderr bytes:', len(result.stdout), len(result.stderr))
+          PY
+          node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict';
+          import fs from 'node:fs';
+          import { dominance, validImage } from './oracle.mjs';
+          const f = JSON.parse(fs.readFileSync(process.env.RUNNER_TEMP + '/accent-fixtures.json'));
+          dominance(f.magenta, 'magenta');
+          dominance(f.green, 'green');
+          assert.throws(() => dominance(f.magenta, 'green'));
+          assert.throws(() => dominance(f.green, 'magenta'));
+          assert.throws(() => validImage(f.black));
+          assert.throws(() => validImage(f.white));
+          NODE
           echo "ACCENT_CAPTURE_HELPER=$RUNNER_TEMP/accent-window-helper" >> "$GITHUB_ENV"
           echo "ACCENT_CAPTURE_HELPER_SHA256=$(shasum -a 256 "$RUNNER_TEMP/accent-window-helper" | cut -d ' ' -f1)" >> "$GITHUB_ENV"
       - uses: pnpm/action-setup@v4

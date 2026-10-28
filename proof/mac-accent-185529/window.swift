@@ -169,19 +169,20 @@ func selftest(_ directory: String) throws -> [String: Any] {
     let root = URL(fileURLWithPath: directory, isDirectory: true)
     try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
     let geometry = root.appendingPathComponent("geometry.json")
-    let data: [String: Any] = ["bounds":box(CGRect(x:100,y:100,width:960,height:700)),
-                              "button":box(CGRect(x:980,y:730,width:32,height:32))]
+    // Smallest geometry accepted by the live oracle keeps the synthetic check bounded.
+    let data: [String: Any] = ["bounds":box(CGRect(x:100,y:100,width:640,height:400)),
+                              "button":box(CGRect(x:680,y:400,width:32,height:32))]
     try JSONSerialization.data(withJSONObject:data).write(to:geometry)
     var result: [String: Any] = [:]
     for name in ["magenta","green","black","white"] {
-        guard let image = NSBitmapImageRep(bitmapDataPlanes:nil,pixelsWide:960,pixelsHigh:700,
+        guard let image = NSBitmapImageRep(bitmapDataPlanes:nil,pixelsWide:640,pixelsHigh:400,
             bitsPerSample:8,samplesPerPixel:4,hasAlpha:true,isPlanar:false,colorSpaceName:.deviceRGB,
             bytesPerRow:0,bitsPerPixel:0) else { throw NSError(domain:"Fixture allocation failed",code:1) }
-        for y in 0..<700 { for x in 0..<960 {
+        for y in 0..<400 { for x in 0..<640 {
             var color: NSColor = name == "white" ? .white : .black
             if name == "magenta" || name == "green" {
-                color = (y >= 150 && y < 170 && x >= 500 && x < 700) ? .white : NSColor(white:0.12,alpha:1)
-                if x >= 880 && x < 912 && y >= 630 && y < 662 {
+                color = (y >= 150 && y < 170 && x >= 300 && x < 500) ? .white : NSColor(white:0.12,alpha:1)
+                if x >= 580 && x < 612 && y >= 300 && y < 332 {
                     color = name == "magenta" ? NSColor(red:224.0/255,green:0,blue:112.0/255,alpha:1) : NSColor(red:0,green:208.0/255,blue:112.0/255,alpha:1)
                 }
             }
