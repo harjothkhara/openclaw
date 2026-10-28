@@ -1,251 +1,114 @@
-# Fork-only, manually dispatched proof for PR #185529.
-name: Mac accent guarded real-app proof
-run-name: PR 185529 Gateway accent red-green
+# Coordinator-owned fork branch only. No product checkout or app build exists in this workflow.
+name: Mac accent helper and runner diagnostic
+run-name: PR 185529 helper and runner diagnostic / ${{ inputs.proof_sha }}
 on:
   workflow_dispatch:
     inputs:
-      live_attempt:
-        description: Codex serial live-app slot (fourth authorized after synthetic-helper overflow; admission-only failure does not count)
+      proof_sha:
+        description: Exact reviewed fork proof commit, not the product PR SHA
         required: true
-        type: choice
-        options: ["1", "2", "3", "4"]
-      serial_confirmed:
-        description: Codex verified no other Mac proof queued/running and ledger permits this attempt
+        type: string
+      helper_only:
+        description: Must be true; there is no app-build mode
         required: true
+        default: true
         type: boolean
+      serial_confirmed:
+        description: "Coordinator reserved the native proof lane and verified #186259 idle"
+        required: true
         default: false
+        type: boolean
 permissions:
   contents: read
   actions: read
+# This exact group is used by the verified #186259 fork workflow. Do not dispatch
+# while that lane has a running/pending request: GitHub can replace pending group runs.
 concurrency:
-  group: mac-focus-week-live
+  group: mac-new-thread-186215-real-app
   cancel-in-progress: false
 jobs:
   admission:
+    if: github.repository == 'harjothkhara/openclaw' && github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    # Codex owns serial dispatch and the bounded attempt ledger.
-    if: github.event_name == 'workflow_dispatch' && github.repository == 'harjothkhara/openclaw'
     steps:
-      - uses: actions/github-script@v7
-        with:
-          script: |
-            if (context.repo.owner !== 'harjothkhara' || context.repo.repo !== 'openclaw' || context.ref !== 'refs/heads/proof/mac-accent-128922-2026-10-27') throw Error('Wrong fork/ref');
-            if (context.payload.inputs.serial_confirmed !== 'true') throw Error('Codex serial/attempt ledger confirmation required');
-            if (!['1','2','3','4'].includes(context.payload.inputs.live_attempt)) throw Error('Invalid live-attempt slot');
-            const repo = context.repo;
-            const current = (await github.rest.actions.getWorkflowRun({...repo,run_id:context.runId})).data;
-            if (current.run_attempt !== 1) throw Error('Do not rerun jobs; a new authorized dispatch consumes the next ledger slot');
-            const other = (await github.rest.actions.getWorkflowRun({...repo,run_id:40582646027})).data;
-            if (other.status !== 'completed') throw Error('#186259 run 40582646027 has not finished');
-            // Conservative: refuse another active/queued workflow whose Mac allocation is unknown.
-            // This check complements Codex serialization; it does not lock unrelated workflows.
-            for (const status of ['queued','in_progress','waiting','requested','pending']) {
-              const page = (await github.rest.actions.listWorkflowRunsForRepo({...repo,status,per_page:100})).data;
-              if (page.total_count > 100) throw Error('Active-run query incomplete');
-              for (const run of page.workflow_runs) {
-                if (run.id === context.runId) continue;
-                const jobs = (await github.rest.actions.listJobsForWorkflowRun({...repo,run_id:run.id,per_page:100})).data;
-                if (jobs.total_count > 100) throw Error('Cannot rule out another Mac allocation: '+run.id);
-                if (!jobs.jobs.length) {
-                  if (run.event === 'schedule') continue; // No job means no current Mac allocation.
-                  throw Error('Cannot rule out another Mac allocation: '+run.id);
-                }
-                if (jobs.jobs.some(j => j.status !== 'completed' && (!j.labels.length || j.labels.some(l=>/macos|mac-/i.test(l))))) throw Error('Other possible Mac job active: '+run.id);
-              }
-            }
-            const history = (await github.rest.actions.listWorkflowRuns({...repo,workflow_id:current.workflow_id,branch:'proof/mac-accent-128922-2026-10-27',event:'workflow_dispatch',created:'>=2026-10-27T20:49:00Z',per_page:100})).data;
-            if (history.total_count > 10) throw Error('Proof dispatch history query incomplete');
-            let liveAttempts = 0;
-            for (const run of history.workflow_runs) {
-              if (run.id === context.runId) continue;
-              const jobs = (await github.rest.actions.listJobsForWorkflowRun({...repo,run_id:run.id,per_page:100})).data;
-              if (jobs.total_count > 100) throw Error('Proof job history query incomplete');
-              // Preserve the previously charged synthetic-preflight slot, but a new
-              // failure before packaging either app does not consume live-app proof.
-              const legacyCharged = run.id === 40591157706 && jobs.jobs.some(j => j.name === 'accent' && j.conclusion !== 'skipped');
-              const enteredAppBuild = jobs.jobs.some(j => j.name === 'accent' && j.steps?.some(s => s.name === 'Package red source without modifications' && s.status !== 'queued' && s.conclusion !== 'skipped'));
-              if (legacyCharged || enteredAppBuild) liveAttempts++;
-            }
-            if (liveAttempts >= 4 || liveAttempts + 1 !== Number(context.payload.inputs.live_attempt)) throw Error('Four live-app attempt budget/ledger mismatch');
-            const pr = (await github.rest.pulls.get({owner:'openclaw',repo:'openclaw',pull_number:185529})).data;
-            if (pr.head.sha !== 'b34033c907786da68f99e5006d0feb2bf8793b7f' || !pr.draft) throw Error('Pinned draft PR changed');
-  accent:
-    needs: admission
-    if: github.run_attempt == 1
-    runs-on: macos-26-intel
-    timeout-minutes: 120
-    env:
-      ACCENT_PROOF_REVIEW: talk-priming-v1
-      BASE_SHA: 1299676aacb6230a0960bd4f2178fb7ddd103849
-      TARGET_SHA: b34033c907786da68f99e5006d0feb2bf8793b7f
-    steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           ref: ${{ github.sha }}
-          path: proof-runner
           persist-credentials: false
           sparse-checkout: |
             proof/mac-accent-185529
             .github/workflows/ci.yml
-      - uses: actions/checkout@v4
+      - uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b
         with:
-          repository: openclaw/openclaw
-          ref: ${{ env.BASE_SHA }}
-          path: sut-red
+          script: |
+            const { admit } = require(process.env.GITHUB_WORKSPACE + '/proof/mac-accent-185529/helper-admission.cjs');
+            const receipt = await admit({ github, context });
+            core.info(JSON.stringify(receipt));
+  compiled-helper:
+    needs: admission
+    if: github.run_attempt == 1 && inputs.helper_only
+    runs-on: macos-26-intel
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
           persist-credentials: false
-      - uses: actions/checkout@v4
-        with:
-          repository: openclaw/openclaw
-          ref: ${{ env.TARGET_SHA }}
-          path: sut-green
-          persist-credentials: false
-      - name: Verify immutable inputs and negative controls
-        shell: bash
-        run: |
-          set -euo pipefail
-          [[ "$(git -C proof-runner rev-parse HEAD)" == "$GITHUB_SHA" ]]
-          [[ "$(git -C sut-red rev-parse HEAD)" == "$BASE_SHA" ]]
-          [[ "$(git -C sut-green rev-parse HEAD)" == "$TARGET_SHA" ]]
-          [[ -z "$(git -C sut-red status --porcelain --untracked-files=normal)" ]]
-          [[ -z "$(git -C sut-green status --porcelain --untracked-files=normal)" ]]
-          observed="$(git ls-remote https://github.com/openclaw/openclaw.git refs/pull/185529/head | cut -f1)"
-          [[ "$observed" == "$TARGET_SHA" ]]
-          cd proof-runner/proof/mac-accent-185529
-          shasum -a 256 -c SHA256SUMS
-          node --check accent.mjs
-          node --check process-guard.mjs
-          node --check priming.mjs
-          node --test oracle.test.mjs process-guard.test.mjs
-          # Compilation/TCC must fail before either expensive app build.
-          xcrun swiftc window.swift -o "$RUNNER_TEMP/accent-window-helper"
-          "$RUNNER_TEMP/accent-window-helper" preflight
-          # Exercise the actual compiled pixel helper before packaging either app.
-          # Its output is synthetic; bound and diagnose it here, not after a 47-minute build.
-          python3 - <<'PY'
-          import json, os, pathlib, subprocess, sys
-          helper = pathlib.Path(os.environ['RUNNER_TEMP']) / 'accent-window-helper'
-          fixtures = pathlib.Path(os.environ['RUNNER_TEMP']) / ('accent-fixtures-' + os.environ['GITHUB_RUN_ID'])
-          env = {key: os.environ[key] for key in ('PATH', 'HOME', 'USER', 'LOGNAME', 'TMPDIR', 'LANG', '__CF_USER_TEXT_ENCODING', 'RUNNER_TRACKING_ID') if os.environ.get(key)}
-          env.update(LANG='en_US.UTF-8', CI='true', NO_COLOR='1', NSUnbufferedIO='YES')
-          def prefix(value):
-              result = (value or b'').decode('utf-8', errors='replace')
-              for key in ('HOME', 'GITHUB_WORKSPACE', 'RUNNER_TEMP'):
-                  path = os.environ.get(key)
-                  if path:
-                      result = result.replace(path, '[' + key + ']')
-              return result[:500]
-          try:
-              result = subprocess.run([str(helper), 'selftest', str(fixtures)], capture_output=True, timeout=120,
-                                      cwd=os.path.join(os.environ['GITHUB_WORKSPACE'], 'sut-red'), env=env)
-          except subprocess.TimeoutExpired as exc:
-              print('Pixel helper selftest timed out; stdout/stderr bytes:', len(exc.stdout or b''), len(exc.stderr or b''))
-              print('Synthetic helper stderr prefix:', prefix(exc.stderr))
-              sys.exit(1)
-          if result.returncode or len(result.stdout) > 8192 or len(result.stderr) > 65536:
-              print('Pixel helper selftest failed; code/stdout/stderr bytes:', result.returncode, len(result.stdout), len(result.stderr))
-              print('Synthetic helper stderr prefix:', prefix(result.stderr))
-              sys.exit(1)
-          values = json.loads(result.stdout)
-          if set(values) != {'magenta', 'green', 'black', 'white'}:
-              raise SystemExit('Pixel helper selftest returned incomplete fixtures')
-          (pathlib.Path(os.environ['RUNNER_TEMP']) / 'accent-fixtures.json').write_bytes(result.stdout)
-          print('Pixel helper selftest passed; stdout/stderr bytes:', len(result.stdout), len(result.stderr))
-          PY
-          node --input-type=module <<'NODE'
-          import assert from 'node:assert/strict';
-          import fs from 'node:fs';
-          import { dominance, validImage } from './oracle.mjs';
-          const f = JSON.parse(fs.readFileSync(process.env.RUNNER_TEMP + '/accent-fixtures.json'));
-          dominance(f.magenta, 'magenta');
-          dominance(f.green, 'green');
-          assert.throws(() => dominance(f.magenta, 'green'));
-          assert.throws(() => dominance(f.green, 'magenta'));
-          assert.throws(() => validImage(f.black));
-          assert.throws(() => validImage(f.white));
-          NODE
-          echo "ACCENT_CAPTURE_HELPER=$RUNNER_TEMP/accent-window-helper" >> "$GITHUB_ENV"
-          echo "ACCENT_CAPTURE_HELPER_SHA256=$(shasum -a 256 "$RUNNER_TEMP/accent-window-helper" | cut -d ' ' -f1)" >> "$GITHUB_ENV"
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 12.15.0
-          run_install: false
-      - uses: actions/setup-node@v4
+          sparse-checkout: |
+            proof/mac-accent-185529
+            .github/workflows/ci.yml
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 24.22.1
-      - name: Restore exact base Swift build
-        id: base-cache
-        uses: actions/cache/restore@v4
-        with:
-          path: sut-red/apps/macos/.build
-          key: mac-accent-26-intel-xcode-26.6-${{ env.BASE_SHA }}-${{ hashFiles('sut-red/apps/macos/Package.resolved') }}
-      - name: Package red source without modifications
+      - name: Verify source and synthetic Node guards
         shell: bash
         run: |
           set -euo pipefail
-          cd sut-red
-          BUILD_ARCHS="$(uname -m)" BUILD_CONFIG=debug ALLOW_ADHOC_SIGNING=1 OPENCLAW_SKIP_MLX_TTS=1 /bin/bash scripts/package-mac-app.sh > "$GITHUB_WORKSPACE/red-package.log" 2>&1
-      - name: Save exact base Swift build
-        if: ${{ steps.base-cache.outputs.cache-hit != 'true' }}
-        uses: actions/cache/save@v4
-        with:
-          path: sut-red/apps/macos/.build
-          key: mac-accent-26-intel-xcode-26.6-${{ env.BASE_SHA }}-${{ hashFiles('sut-red/apps/macos/Package.resolved') }}
-      - name: Require real baseline magenta remains magenta
+          [[ "$(git rev-parse HEAD)" == "$GITHUB_SHA" ]]
+          [[ -z "$(git status --porcelain --untracked-files=normal)" ]]
+          mkdir -p accent-preflight/evidence
+          node -e 'require("node:fs").writeFileSync("accent-preflight/evidence/run.json",JSON.stringify({kind:"compiled-helper-only",appBuilds:0,proofSha:process.env.GITHUB_SHA,runId:process.env.GITHUB_RUN_ID,attempt:process.env.GITHUB_RUN_ATTEMPT}))'
+          cd proof/mac-accent-185529
+          shasum -a 256 -c HELPER_SHA256SUMS
+          node --check pixel-preflight.mjs
+          node --check helper-admission.cjs
+          node --test pixel-preflight.test.mjs helper-admission.test.cjs
+      - name: Compile and exercise the actual pixel helper
         shell: bash
         run: |
           set -euo pipefail
-          node proof-runner/proof/mac-accent-185529/accent.mjs --source "$GITHUB_WORKSPACE/sut-red" --app "$GITHUB_WORKSPACE/sut-red/dist/OpenClaw.app" --mode red --out "$GITHUB_WORKSPACE/accent-red"
-      - name: Release only retired task-owned base checkout
+          cd proof/mac-accent-185529
+          xcrun swiftc window.swift -o "$RUNNER_TEMP/accent-window-helper" > "$GITHUB_WORKSPACE/accent-preflight/evidence/helper-compile.log" 2>&1
+          node pixel-preflight.mjs
+      - name: Compile and diagnose the owned runner window (not product proof)
         shell: bash
         run: |
           set -euo pipefail
-          node -e 'const r=require("./accent-red/evidence/verdict.json"); if(r.status!=="expected-red"||r.cleanup!=="owned-process-groups-retired") process.exit(1)'
-          rm -rf -- "$GITHUB_WORKSPACE/sut-red"
-      - name: Restore exact PR Swift build
-        id: green-cache
-        uses: actions/cache/restore@v4
-        with:
-          path: sut-green/apps/macos/.build
-          key: mac-accent-26-intel-xcode-26.6-${{ env.TARGET_SHA }}-${{ hashFiles('sut-green/apps/macos/Package.resolved') }}
-      - name: Package exact PR source without modifications
-        shell: bash
-        run: |
-          set -euo pipefail
-          cd sut-green
-          BUILD_ARCHS="$(uname -m)" BUILD_CONFIG=debug ALLOW_ADHOC_SIGNING=1 OPENCLAW_SKIP_MLX_TTS=1 /bin/bash scripts/package-mac-app.sh > "$GITHUB_WORKSPACE/green-package.log" 2>&1
-      - name: Save exact PR Swift build
-        if: ${{ steps.green-cache.outputs.cache-hit != 'true' }}
-        uses: actions/cache/save@v4
-        with:
-          path: sut-green/apps/macos/.build
-          key: mac-accent-26-intel-xcode-26.6-${{ env.TARGET_SHA }}-${{ hashFiles('sut-green/apps/macos/Package.resolved') }}
-      - name: Require real exact-head green
-        shell: bash
-        run: |
-          set -euo pipefail
-          node proof-runner/proof/mac-accent-185529/accent.mjs --source "$GITHUB_WORKSPACE/sut-green" --app "$GITHUB_WORKSPACE/sut-green/dist/OpenClaw.app" --mode green --out "$GITHUB_WORKSPACE/accent-green"
-          node - <<'NODE'
-          const fs = require('node:fs');
-          for (const [arm,status,sha] of [['red','expected-red',process.env.BASE_SHA],['green','green',process.env.TARGET_SHA]]) {
-            const r=JSON.parse(fs.readFileSync('accent-'+arm+'/evidence/verdict.json'));
-            if(r.status!==status||r.sourceSha!==sha||r.cleanup!=='owned-process-groups-retired'||r.providerPosts!==0||r.inferenceRequests!==0) throw Error('Invalid '+arm+' proof receipt');
-          }
-          NODE
-      - name: Redact build log paths
+          cd proof/mac-accent-185529
+          node --check runner-capability.mjs
+          node --test runner-capability.test.mjs
+          xcrun swiftc runner-fixture.swift -o "$RUNNER_TEMP/accent-runner-fixture" > "$GITHUB_WORKSPACE/accent-preflight/evidence/runner-compile.log" 2>&1
+          xcrun swiftc runner-probe.swift -o "$RUNNER_TEMP/accent-runner-probe" >> "$GITHUB_WORKSPACE/accent-preflight/evidence/runner-compile.log" 2>&1
+          node runner-capability.mjs
+      - name: Sanitize synthetic diagnostic paths
         if: always()
         shell: bash
         run: |
-          for log in red-package.log green-package.log; do
-            if [[ -f "$log" ]]; then sed -i '' -e "s|$GITHUB_WORKSPACE|[WORKSPACE]|g" -e "s|$HOME|[HOME]|g" "$log"; fi
-          done
-      - uses: actions/upload-artifact@v4
+          python3 - <<'PY'
+          import os, pathlib
+          root = pathlib.Path('accent-preflight/evidence')
+          if root.exists():
+              for p in root.glob('*.log'):
+                  with p.open('rb') as f: data = f.read(4*1024*1024).decode('utf-8', errors='replace')
+                  for k in ('HOME','GITHUB_WORKSPACE','RUNNER_TEMP'):
+                      if os.environ.get(k): data = data.replace(os.environ[k], '['+k+']')
+                  p.write_text(data)
+          PY
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
-          name: mac-accent-185529-${{ github.run_id }}-${{ github.run_attempt }}
-          path: |
-            accent-red/evidence/
-            accent-green/evidence/
-            red-package.log
-            green-package.log
+          name: mac-accent-helper-185529-${{ github.run_id }}-${{ github.run_attempt }}
+          path: accent-preflight/evidence/
           if-no-files-found: error
+          retention-days: 14

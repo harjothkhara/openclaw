@@ -2,6 +2,7 @@
 import AppKit
 import ApplicationServices
 import Foundation
+import ImageIO
 
 func require(_ ok: Bool, _ why: String) throws {
     if !ok { throw NSError(domain: why, code: 1) }
@@ -130,31 +131,78 @@ func inspect(_ pid: pid_t, command: String) throws -> [String: Any] {
     result["draftVisible"] = value == "Accent proof draft; never send"
     return result
 }
+func readOwnedFile(_ url: URL, limit: Int) throws -> Data {
+    let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
+    guard let size = attributes[.size] as? NSNumber else {
+        throw NSError(domain: "Missing owned file size", code: 1)
+    }
+    try require(size.int64Value >= 0 && size.int64Value <= Int64(limit), "Owned file budget exceeded")
+    let data = try Data(contentsOf: url)
+    try require(data.count <= limit, "Owned file changed beyond budget")
+    return data
+}
+// Normalize once: per-pixel NSColor conversion can flood stderr for decoded color spaces.
+struct PixelBitmap {
+    let width: Int
+    let height: Int
+    let rgba: [UInt8]
+
+    init(data: Data) throws {
+        try require(data.count <= 20 * 1024 * 1024, "Capture file budget exceeded")
+        guard let source = CGImageSourceCreateWithData(data as CFData,
+                  [kCGImageSourceShouldCache: false] as CFDictionary),
+              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [String: Any],
+              let width = properties[kCGImagePropertyPixelWidth as String] as? Int,
+              let height = properties[kCGImagePropertyPixelHeight as String] as? Int else {
+            throw NSError(domain: "Unreadable capture dimensions", code: 1)
+        }
+        // Enforce dimensions before asking ImageIO to create/decode the image.
+        try require(width > 0 && height > 0 && width <= 8192 && height <= 8192 &&
+                    width * height <= 16 * 1024 * 1024, "Decoded image budget exceeded")
+        guard let image = CGImageSourceCreateImageAtIndex(source, 0, nil),
+              let colorSpace = CGColorSpace(name: CGColorSpace.sRGB) else {
+            throw NSError(domain: "Unreadable capture image", code: 1)
+        }
+        try require(image.width == width && image.height == height, "Decoded image dimensions changed")
+        var bytes = [UInt8](repeating: 0, count: width * height * 4)
+        try bytes.withUnsafeMutableBytes { raw in
+            guard let context = CGContext(data: raw.baseAddress, width: width, height: height,
+                bitsPerComponent: 8, bytesPerRow: width * 4, space: colorSpace,
+                bitmapInfo: CGBitmapInfo.byteOrder32Big.rawValue | CGImageAlphaInfo.premultipliedLast.rawValue)
+            else { throw NSError(domain: "RGB normalization failed", code: 1) }
+            context.setBlendMode(.copy)
+            context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+        }
+        self.width = width
+        self.height = height
+        self.rgba = bytes
+    }
+}
 func pixels(_ file: String, geometry: String) throws -> [String: Any] {
-    let data = try Data(contentsOf: URL(fileURLWithPath: file))
-    try require(data.count <= 20 * 1024 * 1024, "Capture file budget exceeded")
-    guard let image = NSBitmapImageRep(data: data),
-          let g = try JSONSerialization.jsonObject(with: Data(contentsOf: URL(fileURLWithPath: geometry))) as? [String: Any],
+    let data = try readOwnedFile(URL(fileURLWithPath: file), limit: 20 * 1024 * 1024)
+    let image = try PixelBitmap(data: data)
+    guard let g = try JSONSerialization.jsonObject(with: readOwnedFile(URL(fileURLWithPath: geometry), limit: 16384)) as? [String: Any],
           let wb = g["bounds"] as? [String: Any], let sb = g["button"] as? [String: Any] else {
         throw NSError(domain: "Missing capture/geometry", code: 1)
     }
     let window = try readBox(wb), button = try readBox(sb)
-    let sx = Double(image.pixelsWide) / window.width, sy = Double(image.pixelsHigh) / window.height
+    let sx = Double(image.width) / window.width, sy = Double(image.height) / window.height
     try require(sx >= 1 && sx <= 3 && abs(sx-sy) < 0.01, "Capture scale/shadow mismatch")
     let buttonPixels = CGRect(x: (button.minX-window.minX)*sx, y: (button.minY-window.minY)*sy,
                               width: button.width*sx, height: button.height*sy)
-    let content = CGRect(x: Double(image.pixelsWide)*0.4, y: max(80*sy, Double(image.pixelsHigh)*0.12),
-                         width: Double(image.pixelsWide)*0.58,
-                         height: Double(image.pixelsHigh)*0.98-max(80*sy, Double(image.pixelsHigh)*0.12))
+    let content = CGRect(x: Double(image.width)*0.4, y: max(80*sy, Double(image.height)*0.12),
+                         width: Double(image.width)*0.58,
+                         height: Double(image.height)*0.98-max(80*sy, Double(image.height)*0.12))
     func count(_ region: CGRect) throws -> [String: Int] {
         let x0 = Int(ceil(region.minX)), y0 = Int(ceil(region.minY)), x1 = Int(floor(region.maxX)), y1 = Int(floor(region.maxY))
-        try require(x0 >= 0 && y0 >= 0 && x1 <= image.pixelsWide && y1 <= image.pixelsHigh && x1 > x0 && y1 > y0, "Invalid capture crop")
+        try require(x0 >= 0 && y0 >= 0 && x1 <= image.width && y1 <= image.height && x1 > x0 && y1 > y0, "Invalid capture crop")
         var out = ["total":0,"opaque":0,"nonBlack":0,"nonWhite":0,"dark":0,"light":0,"magenta":0,"green":0]
         for y in y0..<y1 { for x in x0..<x1 {
-            guard let c = image.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB) else { throw NSError(domain: "Unreadable pixel", code: 1) }
-            let r=c.redComponent, g=c.greenComponent, b=c.blueComponent, l=(r+g+b)/3
+            let offset = (y * image.width + x) * 4
+            let r = Double(image.rgba[offset]) / 255, g = Double(image.rgba[offset + 1]) / 255
+            let b = Double(image.rgba[offset + 2]) / 255, l = (r + g + b) / 3
             out["total"]! += 1
-            if c.alphaComponent >= 0.99 { out["opaque"]! += 1 }
+            if image.rgba[offset + 3] >= 253 { out["opaque"]! += 1 }
             if max(r,g,b) > 0.08 { out["nonBlack"]! += 1 }
             if min(r,g,b) < 0.92 { out["nonWhite"]! += 1 }
             if l < 0.3 { out["dark"]! += 1 }; if l > 0.65 { out["light"]! += 1 }
@@ -163,7 +211,7 @@ func pixels(_ file: String, geometry: String) throws -> [String: Any] {
         } }
         return out
     }
-    return ["width":image.pixelsWide,"height":image.pixelsHigh,"content":try count(content),"button":try count(buttonPixels)]
+    return ["width":image.width,"height":image.height,"content":try count(content),"button":try count(buttonPixels)]
 }
 func selftest(_ directory: String) throws -> [String: Any] {
     let root = URL(fileURLWithPath: directory, isDirectory: true)
@@ -174,26 +222,40 @@ func selftest(_ directory: String) throws -> [String: Any] {
                               "button":box(CGRect(x:680,y:400,width:32,height:32))]
     try JSONSerialization.data(withJSONObject:data).write(to:geometry)
     var result: [String: Any] = [:]
-    for name in ["magenta","green","black","white"] {
-        guard let image = NSBitmapImageRep(bitmapDataPlanes:nil,pixelsWide:640,pixelsHigh:400,
-            bitsPerSample:8,samplesPerPixel:4,hasAlpha:true,isPlanar:false,colorSpaceName:.deviceRGB,
-            bytesPerRow:0,bitsPerPixel:0) else { throw NSError(domain:"Fixture allocation failed",code:1) }
-        for y in 0..<400 { for x in 0..<640 {
-            var color: NSColor = name == "white" ? .white : .black
+    for name in ["magenta", "green", "black", "white", "transparent", "gray"] {
+        let width = 640, height = 400
+        var bytes = [UInt8](repeating: 0, count: width * height * 4)
+        for y in 0..<height { for x in 0..<width {
+            var color: [UInt8] = name == "white" ? [255, 255, 255, 255] : [0, 0, 0, 255]
+            if name == "gray" { color = [128, 128, 128, 255] }
+            if name == "transparent" { color = [0, 0, 0, 0] }
             if name == "magenta" || name == "green" {
-                color = (y >= 150 && y < 170 && x >= 300 && x < 500) ? .white : NSColor(white:0.12,alpha:1)
+                color = (y >= 150 && y < 170 && x >= 300 && x < 500) ? [255, 255, 255, 255] : [31, 31, 31, 255]
                 if x >= 580 && x < 612 && y >= 300 && y < 332 {
-                    color = name == "magenta" ? NSColor(red:224.0/255,green:0,blue:112.0/255,alpha:1) : NSColor(red:0,green:208.0/255,blue:112.0/255,alpha:1)
+                    color = name == "magenta" ? [224, 0, 112, 255] : [0, 208, 112, 255]
                 }
             }
-            // White titlebar over black content must remain invalid.
-            if name == "black" && y < 60 { color = .white }
-            image.setColor(color, atX:x, y:y)
+            // Asymmetric chrome and button positions detect top/bottom reversal.
+            if name == "black" && y < 60 { color = [255, 255, 255, 255] }
+            let offset = (y * width + x) * 4
+            for channel in 0..<4 { bytes[offset + channel] = color[channel] }
         } }
-        let file = root.appendingPathComponent(name+".png")
-        guard let png = image.representation(using:.png,properties:[:]) else { throw NSError(domain:"Fixture encode failed",code:1) }
-        try png.write(to:file)
-        result[name] = try pixels(file.path, geometry:geometry.path)
+        guard let colorSpace = CGColorSpace(name: CGColorSpace.sRGB),
+              let provider = CGDataProvider(data: Data(bytes) as CFData),
+              let image = CGImage(width: width, height: height, bitsPerComponent: 8, bitsPerPixel: 32,
+                bytesPerRow: width * 4, space: colorSpace,
+                bitmapInfo: CGBitmapInfo(rawValue: CGBitmapInfo.byteOrder32Big.rawValue | CGImageAlphaInfo.premultipliedLast.rawValue),
+                provider: provider, decode: nil, shouldInterpolate: false, intent: .defaultIntent)
+        else { throw NSError(domain: "Fixture allocation failed", code: 1) }
+        let file = root.appendingPathComponent(name + ".png")
+        guard let destination = CGImageDestinationCreateWithURL(file as CFURL, "public.png" as CFString, 1, nil)
+        else { throw NSError(domain: "Fixture encoder unavailable", code: 1) }
+        CGImageDestinationAddImage(destination, image, nil)
+        try require(CGImageDestinationFinalize(destination), "Fixture encode failed")
+        let decoded = try PixelBitmap(data: readOwnedFile(file, limit: 20 * 1024 * 1024))
+        try require(decoded.width == width && decoded.height == height && decoded.rgba == bytes,
+                    "Fixture RGB/alpha/row-order round trip failed")
+        result[name] = try pixels(file.path, geometry: geometry.path)
     }
     return result
 }
