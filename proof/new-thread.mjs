@@ -107,6 +107,35 @@ export async function bounded(label, promise, ms) {
   }
 }
 
+export function requireOwnedWindow(snapshot, pid) {
+  assert.equal(snapshot?.pid, pid);
+  for (const key of ["ready", "registered", "executableMatches", "frontmost"])
+    assert.equal(snapshot[key], true, "Owned window gate missing " + key);
+  assert.equal(snapshot.hidden, false);
+  assert.equal(snapshot.windows?.length, 1, "Owned normal window is not unique");
+  const window = snapshot.windows[0];
+  assert.ok(Number.isInteger(window.id) && window.id > 0);
+  assert.ok(Number.isFinite(window.width) && window.width >= 640);
+  assert.ok(Number.isFinite(window.height) && window.height >= 400);
+  return window.id;
+}
+
+export function requirePreflightSnapshot(snapshot, records) {
+  assert.equal(snapshot?.complete, true);
+  assert.equal(snapshot.ready, true);
+  assert.equal(snapshot.buttonCount, 1);
+  assert.equal(snapshot.enabled, true);
+  assert.ok(Array.isArray(snapshot.selection) && snapshot.selection.length === 1);
+  assert.equal(snapshot.clicked, undefined, "Startup preflight must not perform AXPress");
+  assert.equal(
+    records.filter(
+      (r) => r.side === "req" && ["sessions.create", "chat.send", "agent"].includes(r.method),
+    ).length,
+    0,
+    "Startup preflight must not create sessions or request inference",
+  );
+}
+
 async function main() {
   assert.equal(process.platform, "darwin");
   assert.equal(process.env.GITHUB_ACTIONS, "true");
@@ -127,8 +156,8 @@ async function main() {
     mode = args["--mode"],
     out = path.resolve(args["--out"]);
   assert.match(sha, /^[a-f0-9]{40}$/);
-  assert.ok(["red", "green"].includes(mode));
-  if (mode === "red") assert.equal(sha, "1b50ce5a6835798634c4d98ac87891f4e5290120");
+  assert.ok(["red", "green", "preflight"].includes(mode));
+  if (mode !== "green") assert.equal(sha, "1b50ce5a6835798634c4d98ac87891f4e5290120");
   const workspace = await fs.realpath(process.env.GITHUB_WORKSPACE);
   assert.ok(
     out.startsWith(workspace + path.sep) && !out.startsWith(source + path.sep),
@@ -247,6 +276,7 @@ async function main() {
         fatal = error;
       });
       child.on("close", (code, signal) => {
+        item.exit = { code, signal };
         item.closed = true;
         log.end(() => resolve({ code, signal }));
       });
@@ -290,21 +320,88 @@ async function main() {
   }
   async function ax(action) {
     const script = path.join(path.dirname(fileURLToPath(import.meta.url)), "new-thread-ax.js");
+    const diagnostic = mode === "preflight" && action === "snapshot";
+    const timeoutMs = diagnostic ? 20000 : 4000;
+    const argv = [
+      "/usr/bin/osascript",
+      "-l",
+      "JavaScript",
+      script,
+      String(appProc.child.pid),
+      action,
+      ...(diagnostic ? ["diagnostic"] : []),
+    ];
+    const p = start("ax-" + action, argv, baseEnv, true);
+    let timedOut = false,
+      value = null;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      kill(p);
+    }, timeoutMs);
+    const startedAt = Date.now();
+    try {
+      const result = await bounded("AX process settlement", p.done, timeoutMs + 2000);
+      assert.ok(
+        !timedOut && result.code === 0,
+        "ax-" + action + " failed/timed out; inspect ax-last.json",
+      );
+      value = JSON.parse(p.stdout.trim());
+      if (value.ready === false && action === "snapshot") return value;
+      assert.equal(value.complete, true);
+      assert.equal(value.buttonCount, 1);
+      return value;
+    } finally {
+      clearTimeout(timer);
+      // Read-only diagnostic mode gets a larger budget; action/proof budgets are unchanged.
+      await save("ax-last.json", {
+        action,
+        diagnostic,
+        timeoutMs,
+        timedOut,
+        startedAt,
+        elapsedMs: Date.now() - startedAt,
+        exit: p.exit ?? null,
+        streamsClosed: p.closed,
+        value,
+        stdout: p.stdout,
+        stderr: p.stderr,
+      });
+    }
+  }
+  async function ownedWindow(action = "inspect") {
     const value = JSON.parse(
-      await run(
-        "ax-" + action,
-        ["/usr/bin/osascript", "-l", "JavaScript", script, String(appProc.child.pid), action],
-        baseEnv,
-        4000,
+      await bounded(
+        "Window observer settlement",
+        run(
+          "window-" + action,
+          [
+            windowHelper,
+            String(appProc.child.pid),
+            path.join(app, "Contents/MacOS/OpenClaw"),
+            action,
+          ],
+          baseEnv,
+          5000,
+        ),
+        7000,
       ),
     );
-    if (value.ready === false && action === "snapshot") return value;
-    assert.equal(value.complete, true);
-    assert.equal(value.buttonCount, 1);
+    await save("window-last.json", value);
+    assert.equal(value.pid, appProc.child.pid);
+    assert.equal(typeof value.ready, "boolean");
+    if (value.ready) requireOwnedWindow(value, appProc.child.pid);
     return value;
   }
-  async function shot(name) {
-    await run(name, ["/usr/sbin/screencapture", "-x", "-t", "png", path.join(evidence, name)]);
+  async function shot(name, windowID = null) {
+    if (windowID !== null) assert.ok(Number.isInteger(windowID) && windowID > 0);
+    await run(name, [
+      "/usr/sbin/screencapture",
+      "-x",
+      "-t",
+      "png",
+      ...(windowID === null ? [] : ["-l", String(windowID)]),
+      path.join(evidence, name),
+    ]);
     const b = await fs.readFile(path.join(evidence, name));
     assert.equal(b.subarray(1, 4).toString(), "PNG");
     assert.ok(b.readUInt32BE(16) >= 640 && b.readUInt32BE(20) >= 400, "Invalid capture dimensions");
@@ -358,7 +455,7 @@ async function main() {
       }
     }
   }
-  let gwEnv, appEnv;
+  let gwEnv, appEnv, windowHelper;
   try {
     assert.ok(source.startsWith(workspace + path.sep), "SUT must be an owned workspace checkout");
     assert.ok(
@@ -389,12 +486,25 @@ async function main() {
     report.axHelperSha256 = await hash(
       path.join(path.dirname(fileURLToPath(import.meta.url)), "new-thread-ax.js"),
     );
+    windowHelper = await fs.realpath(process.env.OPENCLAW_NEW_THREAD_WINDOW_HELPER);
+    const runnerTemp = await fs.realpath(process.env.RUNNER_TEMP);
+    assert.ok(windowHelper.startsWith(runnerTemp + path.sep), "Use the task-built window observer");
+    report.windowHelperSourceSha256 = await hash(
+      path.join(path.dirname(fileURLToPath(import.meta.url)), "new-thread-window.swift"),
+    );
+    report.windowHelperExecutableSha256 = await hash(windowHelper);
+    assert.match(process.env.OPENCLAW_NEW_THREAD_WINDOW_HELPER_SHA256 || "", /^[a-f0-9]{64}$/);
+    assert.equal(
+      report.windowHelperExecutableSha256,
+      process.env.OPENCLAW_NEW_THREAD_WINDOW_HELPER_SHA256,
+    );
     report.xcode = await run("xcode", ["/usr/bin/xcodebuild", "-version"]);
     report.binaryArchitectures = await run("arch", ["/usr/bin/lipo", "-archs", exe]);
     assert.ok(
       report.binaryArchitectures.split(" ").includes(os.arch() === "x64" ? "x86_64" : os.arch()),
     );
-    await shot("capture-preflight.png");
+    // This is display/capture plumbing only: the app has not been launched yet.
+    await shot("display-capture-preflight.png");
     // A real source Gateway, not a mocked transport. The canary rejects inference.
     canary = http.createServer((req, res) => {
       if (req.method === "POST") providerPosts++;
@@ -712,6 +822,22 @@ async function main() {
         continue;
       }
       if (status.primary.connection.state === "connected") {
+        // Window Server/AppKit state is independent of the slow System Events AX traversal.
+        const window = await ownedWindow("activate");
+        if (!window.ready) {
+          await sleep(500);
+          continue;
+        }
+        const windowID = requireOwnedWindow(window, appProc.child.pid);
+        if (report.window?.windows[0]?.id !== windowID)
+          await shot("window-before-ax.png", windowID);
+        const confirmed = await ownedWindow();
+        assert.equal(
+          requireOwnedWindow(confirmed, appProc.child.pid),
+          windowID,
+          "Owned frontmost window changed before AX traversal",
+        );
+        report.window = confirmed;
         const a = await ax("snapshot"); // Permission/unreadable/timeout failures are not readiness retries.
         if (a.ready && a.enabled === true && a.selection.length === 1) {
           beforeAX = a;
@@ -720,6 +846,7 @@ async function main() {
       }
       await sleep(500);
     }
+    assert.ok(report.window?.ready, "No owned frontmost onscreen window; GUI setup incomplete");
     assert.ok(beforeAX, "Authenticated app/native AX readiness missing");
     assert.ok(
       records.some(
@@ -732,11 +859,34 @@ async function main() {
       ),
       "No admitted native operator connection",
     );
+    if (mode === "preflight") {
+      requirePreflightSnapshot(beforeAX, records);
+      const live = [...connections.keys()].filter((conn) => {
+        const state = connectionState(conn);
+        return (
+          state.client === "openclaw-macos" &&
+          state.role === "operator" &&
+          state.admitted &&
+          !state.closed
+        );
+      });
+      assert.equal(live.length, 1, "Startup requires one live admitted native operator connection");
+      proofConn = live[0];
+      report.liveNativeConnection = connectionState(proofConn);
+      requireLiveConnection(report.liveNativeConnection);
+      assert.equal((await call("health")).ok, true);
+      assert.ok(!fatal && !appProc.closed && !gateway.closed);
+      await save("before-ax.json", beforeAX);
+      await shot("startup-only.png", requireOwnedWindow(await ownedWindow(), appProc.child.pid));
+      report.nativeUIProof = false;
+      report.status = "preflight-ready";
+      return; // finally still enforces inference, fatal-error, and owned-cleanup gates.
+    }
     const before = await call("sessions.list", { limit: 200 });
     assert.ok(Array.isArray(before.sessions));
     const beforeKeys = new Set(before.sessions.map((r) => r.key));
     await save("before-ax.json", beforeAX);
-    await shot("before.png");
+    await shot("before.png", requireOwnedWindow(await ownedWindow(), appProc.child.pid));
     await sleep(1000);
     appBaseline = await ps();
     report.baseline = appBaseline;
@@ -833,7 +983,7 @@ async function main() {
       assert.ok(session, "Newly created canonical session is not selected in the native sidebar");
       await save("after-ax.json", selected);
       await save("session.json", session);
-      await shot("after.png");
+      await shot("after.png", requireOwnedWindow(await ownedWindow(), appProc.child.pid));
       await sleep(10000);
       assert.ok(!guard && !fatal && !appProc.closed, "Guard fired during stability observation");
       correlate(records, clickedAt);
@@ -942,7 +1092,8 @@ async function main() {
       manifest[name] = await hash(path.join(evidence, name));
     await save("SHA256.json", manifest);
     console.log(JSON.stringify({ mode, status: report.status, cleanup: report.cleanup, evidence }));
-    process.exitCode = report.status === (mode === "red" ? "expected-red" : "green") ? 0 : 1;
+    const expected = { red: "expected-red", green: "green", preflight: "preflight-ready" }[mode];
+    process.exitCode = report.status === expected ? 0 : 1;
     if (report.cleanup === "failed") process.exit(1); // Verdict is flushed; the disposable job owns OS teardown.
   }
 }

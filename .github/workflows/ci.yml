@@ -7,6 +7,11 @@ on:
         description: Exact upstream PR head SHA
         required: true
         type: string
+      ax_preflight_only:
+        description: Startup/AX diagnostics only; never qualifies as red/green proof
+        required: true
+        default: true
+        type: boolean
 permissions:
   contents: read
 concurrency:
@@ -52,8 +57,9 @@ jobs:
           [[ "$(git -C sut-green rev-parse HEAD)" == "$TARGET_SHA" ]]
           branch_sha="$(git ls-remote https://github.com/openclaw/openclaw.git refs/heads/openclaw/marine-crayfish-3 | cut -f1)"
           [[ "$branch_sha" == "$TARGET_SHA" ]]
-          echo 'c42d3b9af08bff92d54c1a1c1ca6279e547d71e2ede93a7aad00813b9aa6ee55  proof-runner/proof/new-thread.mjs' | shasum -a 256 -c
-          echo '2a00074eb09376e2bab0f2569bbab9940bd04192363f89edccc80ce31f535f24  proof-runner/proof/new-thread-ax.js' | shasum -a 256 -c
+          echo 'f82ecd9f80cccbe1912cdeb236d3c27ef333772360549ca9b1da15953cd2e7af  proof-runner/proof/new-thread.mjs' | shasum -a 256 -c
+          echo '3f60813567c8e930841c6dbecace19b855ce38722185741f9dc9a77101e10744  proof-runner/proof/new-thread-ax.js' | shasum -a 256 -c
+          echo '068760c364e61beb36cb02341a42f51f7829085dc1e7f953af333a2265c2713f  proof-runner/proof/new-thread-window.swift' | shasum -a 256 -c
           node --check proof-runner/proof/new-thread.mjs
           printf 'Base %s\nPR %s\nWorkflow %s\n' "$BASE_SHA" "$TARGET_SHA" "$GITHUB_SHA"
       - name: Set up pnpm
@@ -65,6 +71,15 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 24.22.1
+      - name: Compile independent window observer before packaging
+        timeout-minutes: 2
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcrun swiftc -parse-as-library proof-runner/proof/new-thread-window.swift -o "$RUNNER_TEMP/new-thread-window-observer"
+          "$RUNNER_TEMP/new-thread-window-observer" --selftest
+          echo "OPENCLAW_NEW_THREAD_WINDOW_HELPER=$RUNNER_TEMP/new-thread-window-observer" >> "$GITHUB_ENV"
+          echo "OPENCLAW_NEW_THREAD_WINDOW_HELPER_SHA256=$(shasum -a 256 "$RUNNER_TEMP/new-thread-window-observer" | cut -d ' ' -f1)" >> "$GITHUB_ENV"
       - name: Preflight hosted GUI and Accessibility
         shell: bash
         run: |
@@ -98,24 +113,49 @@ jobs:
         with:
           path: sut-red/apps/macos/.build
           key: mac-new-thread-package-macos-26-intel-${{ env.BASE_SHA }}-${{ hashFiles('sut-red/apps/macos/Package.resolved') }}
-      - name: Run guarded real-app red control
+      - name: Run base startup preflight or guarded red control
         timeout-minutes: 10
         shell: bash
         run: |
           set -euo pipefail
+          mode=red
+          if [[ "${{ inputs.ax_preflight_only }}" == true ]]; then mode=preflight; fi
           node proof-runner/proof/new-thread.mjs \
             --source "$GITHUB_WORKSPACE/sut-red" --app "$GITHUB_WORKSPACE/sut-red/dist/OpenClaw.app" \
-            --sha "$BASE_SHA" --mode red --out "$GITHUB_WORKSPACE/new-thread-red"
+            --sha "$BASE_SHA" --mode "$mode" --out "$GITHUB_WORKSPACE/new-thread-red"
+      - name: Require startup-only no-action verdict
+        if: ${{ inputs.ax_preflight_only }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          node - <<'NODE'
+          const fs = require('node:fs');
+          const root = 'new-thread-red/evidence/';
+          const r = JSON.parse(fs.readFileSync(root + 'verdict.json', 'utf8'));
+          const rpc = JSON.parse(fs.readFileSync(root + 'rpc.json', 'utf8'));
+          if (r.mode !== 'preflight' || r.status !== 'preflight-ready' || r.nativeUIProof !== false ||
+              r.sourceSha !== process.env.BASE_SHA || r.workflowSha !== process.env.GITHUB_SHA ||
+              r.providerPosts !== 0 || r.cleanup !== 'owned-process-groups-retired' || r.clickedAt ||
+              r.window?.ready !== true || r.window?.frontmost !== true || r.window?.hidden !== false ||
+              r.window?.registered !== true || r.window?.executableMatches !== true ||
+              r.window?.windows?.length !== 1 || !fs.statSync(root + 'window-before-ax.png').size ||
+              rpc.some(x => x.side === 'req' && ['sessions.create', 'chat.send', 'agent'].includes(x.method))) {
+            throw Error('Startup preflight failed its no-action contract');
+          }
+          NODE
       - name: Release disposable base checkout
+        if: ${{ !inputs.ax_preflight_only }}
         shell: bash
         run: rm -rf -- "$GITHUB_WORKSPACE/sut-red"
       - name: Restore exact PR native build
+        if: ${{ !inputs.ax_preflight_only }}
         id: green-cache
         uses: actions/cache/restore@v4
         with:
           path: sut-green/apps/macos/.build
           key: mac-new-thread-package-macos-26-intel-${{ env.TARGET_SHA }}-${{ hashFiles('sut-green/apps/macos/Package.resolved') }}
       - name: Build PR Mac app and Gateway
+        if: ${{ !inputs.ax_preflight_only }}
         shell: bash
         run: |
           set -euo pipefail
@@ -123,12 +163,13 @@ jobs:
           BUILD_ARCHS="$(uname -m)" BUILD_CONFIG=debug ALLOW_ADHOC_SIGNING=1 OPENCLAW_SKIP_MLX_TTS=1 \
             /bin/bash scripts/package-mac-app.sh > "$GITHUB_WORKSPACE/green-package.log" 2>&1
       - name: Save exact PR native build
-        if: ${{ steps.green-cache.outputs.cache-hit != 'true' }}
+        if: ${{ !inputs.ax_preflight_only && steps.green-cache.outputs.cache-hit != 'true' }}
         uses: actions/cache/save@v4
         with:
           path: sut-green/apps/macos/.build
           key: mac-new-thread-package-macos-26-intel-${{ env.TARGET_SHA }}-${{ hashFiles('sut-green/apps/macos/Package.resolved') }}
       - name: Run guarded real-app green control
+        if: ${{ !inputs.ax_preflight_only }}
         timeout-minutes: 10
         shell: bash
         run: |
@@ -137,6 +178,7 @@ jobs:
             --source "$GITHUB_WORKSPACE/sut-green" --app "$GITHUB_WORKSPACE/sut-green/dist/OpenClaw.app" \
             --sha "$TARGET_SHA" --mode green --out "$GITHUB_WORKSPACE/new-thread-green"
       - name: Require exact-head red and green verdicts
+        if: ${{ !inputs.ax_preflight_only }}
         shell: bash
         run: |
           set -euo pipefail
