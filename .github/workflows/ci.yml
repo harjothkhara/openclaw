@@ -7,6 +7,11 @@ on:
         description: Exact upstream PR head SHA
         required: true
         type: string
+      serial_confirmed:
+        description: Coordinator explicitly confirmed no other active Mac proof run
+        required: true
+        default: false
+        type: boolean
       ax_preflight_only:
         description: Startup/AX diagnostics only; never qualifies as red/green proof
         required: true
@@ -18,7 +23,17 @@ concurrency:
   group: mac-new-thread-186215-real-app
   cancel-in-progress: false
 jobs:
+  admission:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require explicit coordinator serial admission and first attempt
+        env:
+          SERIAL_CONFIRMED: ${{ inputs.serial_confirmed }}
+        run: |
+          test "$SERIAL_CONFIRMED" = true
+          test "$GITHUB_RUN_ATTEMPT" = 1
   mac-new-thread-real-app:
+    needs: admission
     if: github.repository == 'harjothkhara/openclaw' && github.ref == 'refs/heads/proof/mac-new-thread-186215-2026-10-27'
     runs-on: macos-26-intel
     timeout-minutes: 120
@@ -34,6 +49,17 @@ jobs:
           sparse-checkout: |
             proof
             package.json
+            .github/workflows
+      - name: Check out immutable shared AppKit canary
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: harjothkhara/openclaw
+          ref: 13cde4984372bef34402ae61ff7891379626f260
+          path: shared-canary
+          persist-credentials: false
+          sparse-checkout: |
+            proof/mac-accent-185529
+            .github/workflows/ci.yml
       - name: Check out exact unfixed source
         uses: actions/checkout@v4
         with:
@@ -57,9 +83,10 @@ jobs:
           [[ "$(git -C sut-green rev-parse HEAD)" == "$TARGET_SHA" ]]
           branch_sha="$(git ls-remote https://github.com/openclaw/openclaw.git refs/heads/openclaw/marine-crayfish-3 | cut -f1)"
           [[ "$branch_sha" == "$TARGET_SHA" ]]
-          echo '1f7df0c9f83982aa65f456b65de7083629d4a2dcd67a8a2f0b2c169b39657edb  proof-runner/proof/new-thread.mjs' | shasum -a 256 -c
-          echo '3f60813567c8e930841c6dbecace19b855ce38722185741f9dc9a77101e10744  proof-runner/proof/new-thread-ax.js' | shasum -a 256 -c
-          echo '068760c364e61beb36cb02341a42f51f7829085dc1e7f953af333a2265c2713f  proof-runner/proof/new-thread-window.swift' | shasum -a 256 -c
+          [[ "$(git -C proof-runner rev-parse HEAD)" == "$GITHUB_SHA" ]]
+          [[ "$(git -C shared-canary rev-parse HEAD)" == 13cde4984372bef34402ae61ff7891379626f260 ]]
+          (cd proof-runner/proof && shasum -a 256 -c PROOF_SHA256SUMS)
+          (cd shared-canary/proof/mac-accent-185529 && shasum -a 256 -c HELPER_SHA256SUMS)
           node --check proof-runner/proof/new-thread.mjs
           printf 'Base %s\nPR %s\nWorkflow %s\n' "$BASE_SHA" "$TARGET_SHA" "$GITHUB_SHA"
       - name: Set up pnpm
@@ -71,6 +98,22 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 24.22.1
+      - name: Compile and qualify actual helpers on shared fixture before packaging
+        timeout-minutes: 4
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p new-thread-runner/evidence
+          node --test proof-runner/proof/*.test.mjs > new-thread-runner/evidence/node-controls.log 2>&1
+          xcrun swiftc -parse-as-library proof-runner/proof/targeted-menu.swift -o "$RUNNER_TEMP/new-thread-targeted-menu" > new-thread-runner/evidence/helper-compile.log 2>&1
+          xcrun swiftc shared-canary/proof/mac-accent-185529/window.swift -o "$RUNNER_TEMP/accent-window-helper" >> new-thread-runner/evidence/helper-compile.log 2>&1
+          xcrun swiftc shared-canary/proof/mac-accent-185529/runner-fixture.swift -o "$RUNNER_TEMP/accent-runner-fixture" >> new-thread-runner/evidence/helper-compile.log 2>&1
+          xcrun swiftc shared-canary/proof/mac-accent-185529/runner-probe.swift -o "$RUNNER_TEMP/accent-runner-probe" >> new-thread-runner/evidence/helper-compile.log 2>&1
+          export OPENCLAW_NEW_THREAD_AX_HELPER="$RUNNER_TEMP/new-thread-targeted-menu"
+          export OPENCLAW_SHARED_CANARY_DIR="$GITHUB_WORKSPACE/shared-canary/proof/mac-accent-185529"
+          node proof-runner/proof/qualified-canary.mjs
+          echo "OPENCLAW_NEW_THREAD_AX_HELPER=$OPENCLAW_NEW_THREAD_AX_HELPER" >> "$GITHUB_ENV"
+          echo "OPENCLAW_NEW_THREAD_AX_HELPER_SHA256=$(shasum -a 256 "$OPENCLAW_NEW_THREAD_AX_HELPER" | cut -d ' ' -f1)" >> "$GITHUB_ENV"
       - name: Compile independent window observer before packaging
         timeout-minutes: 2
         shell: bash
@@ -80,20 +123,6 @@ jobs:
           "$RUNNER_TEMP/new-thread-window-observer" --selftest
           echo "OPENCLAW_NEW_THREAD_WINDOW_HELPER=$RUNNER_TEMP/new-thread-window-observer" >> "$GITHUB_ENV"
           echo "OPENCLAW_NEW_THREAD_WINDOW_HELPER_SHA256=$(shasum -a 256 "$RUNNER_TEMP/new-thread-window-observer" | cut -d ' ' -f1)" >> "$GITHUB_ENV"
-      - name: Preflight hosted GUI and Accessibility
-        shell: bash
-        run: |
-          set -euo pipefail
-          launchctl print "gui/$(id -u)" >/dev/null
-          /usr/bin/perl -e 'alarm 15; exec @ARGV' /usr/bin/osascript -l JavaScript \
-            -e 'var se = Application("System Events"); var p = se.processes(); if (p.length < 1) throw Error("No accessible GUI processes"); p.length' \
-            > /dev/null
-          [[ "$(/usr/bin/perl -e 'alarm 15; exec @ARGV' /usr/bin/osascript \
-            -e 'tell application "System Events" to get UI elements enabled')" == true ]]
-          /usr/bin/perl -e 'alarm 15; exec @ARGV' /usr/sbin/screencapture -x -t png "$GITHUB_WORKSPACE/gui-preflight.png"
-          /usr/bin/sips -g pixelWidth -g pixelHeight "$GITHUB_WORKSPACE/gui-preflight.png" \
-            > "$GITHUB_WORKSPACE/gui-preflight-dimensions.txt"
-          test -s "$GITHUB_WORKSPACE/gui-preflight.png"
       - name: Restore exact base native build
         id: base-cache
         uses: actions/cache/restore@v4
@@ -120,7 +149,7 @@ jobs:
           set -euo pipefail
           mode=red
           if [[ "${{ inputs.ax_preflight_only }}" == true ]]; then mode=preflight; fi
-          node proof-runner/proof/new-thread.mjs \
+          /usr/bin/perl -e 'alarm 600; exec @ARGV' node proof-runner/proof/new-thread.mjs \
             --source "$GITHUB_WORKSPACE/sut-red" --app "$GITHUB_WORKSPACE/sut-red/dist/OpenClaw.app" \
             --sha "$BASE_SHA" --mode "$mode" --out "$GITHUB_WORKSPACE/new-thread-red"
       - name: Require startup-only no-action verdict
@@ -174,7 +203,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          node proof-runner/proof/new-thread.mjs \
+          /usr/bin/perl -e 'alarm 600; exec @ARGV' node proof-runner/proof/new-thread.mjs \
             --source "$GITHUB_WORKSPACE/sut-green" --app "$GITHUB_WORKSPACE/sut-green/dist/OpenClaw.app" \
             --sha "$TARGET_SHA" --mode green --out "$GITHUB_WORKSPACE/new-thread-green"
       - name: Require exact-head red and green verdicts
@@ -189,8 +218,11 @@ jobs:
             ['green', 'green', process.env.TARGET_SHA],
           ]) {
             const r = JSON.parse(fs.readFileSync('new-thread-' + arm + '/evidence/verdict.json', 'utf8'));
-            if (r.status !== status || r.sourceSha !== sha || r.providerPosts !== 0 ||
-                r.cleanup !== 'owned-process-groups-retired') {
+            if (r.mode !== arm || r.workflowSha !== process.env.GITHUB_SHA || r.status !== status || r.sourceSha !== sha || r.providerPosts !== 0 ||
+                r.cleanup !== 'owned-process-groups-retired' ||
+                r.nativeUIProof !== true ||
+                (arm === 'red' && r.redBoundary?.kind !== 'native-recursion-before-rpc') ||
+                (arm === 'green' && (r.session?.oracle !== 'native-copy-session-key' || r.session?.key !== r.key || !r.session?.sessionId))) {
               throw new Error(arm + ' verdict did not meet required proof contract');
             }
           }
@@ -200,7 +232,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          for log in red-package.log green-package.log; do
+          for log in red-package.log green-package.log new-thread-runner/evidence/*.log; do
             if [[ -f "$log" ]]; then
               sed -i '' -e "s|$GITHUB_WORKSPACE|[WORKSPACE]|g" -e "s|$HOME|[HOME]|g" "$log"
             fi
@@ -211,9 +243,9 @@ jobs:
         with:
           name: mac-new-thread-real-app-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
+            new-thread-runner/evidence/
             new-thread-red/evidence/
             new-thread-green/evidence/
-            gui-preflight-dimensions.txt
             red-package.log
             green-package.log
           if-no-files-found: error

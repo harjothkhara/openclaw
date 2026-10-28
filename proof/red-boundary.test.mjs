@@ -8,8 +8,8 @@ const fixture = () => ({
   baseline: { rssKiB: 1000, vszKiB: 1000 },
   metrics: [{ t: 1500, rssKiB: 1000 + 65 * 1024, vszKiB: 1000 }],
   rows: [],
-  beforeKeys: new Set(["main"]),
-  after: { sessions: [{ key: "main" }] },
+  before: { sessions: [{ key: "main", sessionId: "old" }] },
+  after: { sessions: [{ key: "main", sessionId: "old" }] },
 });
 test("positive native recursion evidence may have zero Gateway requests", () => {
   assert.deepEqual(requireRecursiveRed(fixture()), {
@@ -75,6 +75,12 @@ for (const [name, mutate] of [
     "new durable session despite no observed RPC",
     (r) => {
       r.after.sessions.push({ key: "other" });
+    },
+  ],
+  [
+    "existing durable ID replaced",
+    (r) => {
+      r.after.sessions[0].sessionId = "replacement";
     },
   ],
   [

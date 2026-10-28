@@ -10,6 +10,7 @@ import os from "node:os";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
+import { requireActiveKey, requireCopyReceipt } from "./active-key.mjs";
 
 export function observedResponse(request, frame) {
   return {
@@ -30,7 +31,7 @@ export function requireRecursiveRed({
   metrics,
   baseline,
   rows,
-  beforeKeys,
+  before,
   after,
 }) {
   assert.equal(click?.clicked, true, "Missing acknowledged native action");
@@ -58,9 +59,9 @@ export function requireRecursiveRed({
   );
   assert.ok(Array.isArray(after.sessions), "Missing authoritative post-action session list");
   assert.deepEqual(
-    after.sessions.map((r) => r.key).sort(),
-    [...beforeKeys].sort(),
-    "Base unexpectedly changed durable session keys",
+    after.sessions.map((r) => [r.key, r.sessionId]).sort(),
+    before.sessions.map((r) => [r.key, r.sessionId]).sort(),
+    "Base unexpectedly changed durable session identities",
   );
   return { kind: "native-recursion-before-rpc", createRequests: 0, durableSessionsUnchanged: true };
 }
@@ -105,30 +106,6 @@ export function correlate(rows, since) {
   return res.key;
 }
 
-export function selectedSession(beforeKeys, after, key, ax, marker) {
-  assert.ok(typeof marker === "string" && marker.startsWith("NT186215-") && marker.length >= 24);
-  assert.ok(Array.isArray(after.sessions), "Missing persisted session list");
-  const added = after.sessions.filter((r) => !beforeKeys.has(r.key));
-  assert.equal(added.length, 1);
-  assert.equal(added[0].key, key);
-  assert.ok(added[0].sessionId);
-  assert.equal(ax.complete, true);
-  assert.equal(ax.buttonCount, 1);
-  assert.equal(ax.enabled, true);
-  assert.equal(ax.selection?.length, 1);
-  assert.equal(added[0].label, marker, "Canonical new session lacks the observer label");
-  assert.equal(
-    after.sessions.filter((r) => r.label === marker).length,
-    1,
-    "Observer label is not unique",
-  );
-  assert.ok(
-    ax.selection[0].some((s) => s === marker),
-    "Selected native row is not the uniquely marked session",
-  );
-  return { key, sessionId: added[0].sessionId, label: marker };
-}
-
 export function requireLiveConnection(state) {
   assert.equal(state?.client, "openclaw-macos");
   assert.equal(state?.role, "operator");
@@ -165,19 +142,38 @@ export function requireOwnedWindow(snapshot, pid) {
   return window.id;
 }
 
+export function requireInventory(page) {
+  assert.ok(Array.isArray(page?.sessions), "Missing authoritative session inventory");
+  assert.equal(page.hasMore, false, "Session inventory is truncated");
+  assert.equal(page.nextOffset, null);
+  assert.equal(page.count, page.sessions.length);
+  assert.equal(page.totalCount, page.sessions.length, "Incomplete session inventory");
+  assert.equal(new Set(page.sessions.map((r) => r.key)).size, page.sessions.length);
+  for (const row of page.sessions) {
+    assert.ok(typeof row.key === "string" && row.key.length > 0);
+    assert.ok(typeof row.sessionId === "string" && row.sessionId.length > 0);
+  }
+  return page;
+}
 export function requirePreflightSnapshot(snapshot, records) {
-  assert.equal(snapshot?.complete, true);
-  assert.equal(snapshot.ready, true);
-  assert.equal(snapshot.buttonCount, 1);
-  assert.equal(snapshot.enabled, true);
-  assert.ok(Array.isArray(snapshot.selection) && snapshot.selection.length === 1);
-  assert.equal(snapshot.clicked, undefined, "Startup preflight must not perform AXPress");
+  assert.equal(snapshot?.schema, 1);
+  assert.equal(snapshot.kind, "targeted-native-ax");
+  assert.equal(snapshot.action, "probe");
+  for (const key of ["complete", "frontmost", "threadEnabled"]) assert.equal(snapshot[key], true);
+  assert.equal(snapshot.appRole, "AXApplication");
+  assert.equal(snapshot.windowRole, "AXWindow");
+  assert.equal(snapshot.threadMenuCount, 1);
+  assert.equal(snapshot.newThreadPresses, 0);
+  assert.equal(snapshot.menuItemRouteVerified, false);
+  assert.equal(snapshot.clicked, undefined);
+  assert.ok(
+    Number.isFinite(snapshot.elapsedMs) && snapshot.elapsedMs >= 0 && snapshot.elapsedMs <= 3000,
+  );
   assert.equal(
     records.filter(
       (r) => r.side === "req" && ["sessions.create", "chat.send", "agent"].includes(r.method),
     ).length,
     0,
-    "Startup preflight must not create sessions or request inference",
   );
 }
 
@@ -364,44 +360,43 @@ async function main() {
     return p.stdout.trim();
   }
   async function ax(action) {
-    const script = path.join(path.dirname(fileURLToPath(import.meta.url)), "new-thread-ax.js");
-    const diagnostic = mode === "preflight" && action === "snapshot";
-    const timeoutMs = diagnostic ? 20000 : 4000;
     const argv = [
-      "/usr/bin/osascript",
-      "-l",
-      "JavaScript",
-      script,
+      axHelper,
       String(appProc.child.pid),
+      path.join(app, "Contents/MacOS/OpenClaw"),
       action,
-      ...(diagnostic ? ["diagnostic"] : []),
     ];
-    const p = start("ax-" + action, argv, baseEnv, true);
+    // Only the task-owned observer receives hosted-effect context, not the SUT.
+    const env = {
+      ...baseEnv,
+      GITHUB_ACTIONS: "true",
+      GITHUB_REPOSITORY: "harjothkhara/openclaw",
+      RUNNER_ENVIRONMENT: "github-hosted",
+    };
+    const p = start("ax-" + action, argv, env, true);
     let timedOut = false,
       value = null;
+    const startedAt = Date.now();
     const timer = setTimeout(() => {
       timedOut = true;
       kill(p);
-    }, timeoutMs);
-    const startedAt = Date.now();
+    }, 4000);
     try {
-      const result = await bounded("AX process settlement", p.done, timeoutMs + 2000);
+      const result = await bounded("AX process settlement", p.done, 6000);
       assert.ok(
         !timedOut && result.code === 0,
         "ax-" + action + " failed/timed out; inspect ax-last.json",
       );
       value = JSON.parse(p.stdout.trim());
-      if (value.ready === false && action === "snapshot") return value;
+      assert.equal(value.pid, appProc.child.pid);
       assert.equal(value.complete, true);
-      assert.equal(value.buttonCount, 1);
+      if (action === "probe") requirePreflightSnapshot(value, records);
       return value;
     } finally {
       clearTimeout(timer);
-      // Read-only diagnostic mode gets a larger budget; action/proof budgets are unchanged.
       await save("ax-last.json", {
         action,
-        diagnostic,
-        timeoutMs,
+        timeoutMs: 4000,
         timedOut,
         startedAt,
         elapsedMs: Date.now() - startedAt,
@@ -437,14 +432,15 @@ async function main() {
     if (value.ready) requireOwnedWindow(value, appProc.child.pid);
     return value;
   }
-  async function shot(name, windowID = null) {
-    if (windowID !== null) assert.ok(Number.isInteger(windowID) && windowID > 0);
+  async function shot(name, windowID) {
+    assert.ok(Number.isInteger(windowID) && windowID > 0);
     await run(name, [
       "/usr/sbin/screencapture",
       "-x",
       "-t",
       "png",
-      ...(windowID === null ? [] : ["-l", String(windowID)]),
+      "-l",
+      String(windowID),
       path.join(evidence, name),
     ]);
     const b = await fs.readFile(path.join(evidence, name));
@@ -500,7 +496,7 @@ async function main() {
       }
     }
   }
-  let gwEnv, appEnv, windowHelper;
+  let gwEnv, appEnv, windowHelper, axHelper;
   try {
     assert.ok(source.startsWith(workspace + path.sep), "SUT must be an owned workspace checkout");
     assert.ok(
@@ -529,7 +525,7 @@ async function main() {
     report.gatewayBuildInfoSha256 = await hash(buildInfoPath);
     report.driverSha256 = await hash(fileURLToPath(import.meta.url));
     report.axHelperSha256 = await hash(
-      path.join(path.dirname(fileURLToPath(import.meta.url)), "new-thread-ax.js"),
+      path.join(path.dirname(fileURLToPath(import.meta.url)), "targeted-menu.swift"),
     );
     windowHelper = await fs.realpath(process.env.OPENCLAW_NEW_THREAD_WINDOW_HELPER);
     const runnerTemp = await fs.realpath(process.env.RUNNER_TEMP);
@@ -543,13 +539,17 @@ async function main() {
       report.windowHelperExecutableSha256,
       process.env.OPENCLAW_NEW_THREAD_WINDOW_HELPER_SHA256,
     );
+    axHelper = await fs.realpath(process.env.OPENCLAW_NEW_THREAD_AX_HELPER);
+    assert.ok(axHelper.startsWith(runnerTemp + path.sep), "Use the task-built targeted AX helper");
+    report.axHelperExecutableSha256 = await hash(axHelper);
+    assert.match(process.env.OPENCLAW_NEW_THREAD_AX_HELPER_SHA256 || "", /^[a-f0-9]{64}$/);
+    assert.equal(report.axHelperExecutableSha256, process.env.OPENCLAW_NEW_THREAD_AX_HELPER_SHA256);
+    report.activeKeyOracleSha256 = await hash(new URL("./active-key.mjs", import.meta.url));
     report.xcode = await run("xcode", ["/usr/bin/xcodebuild", "-version"]);
     report.binaryArchitectures = await run("arch", ["/usr/bin/lipo", "-archs", exe]);
     assert.ok(
       report.binaryArchitectures.split(" ").includes(os.arch() === "x64" ? "x86_64" : os.arch()),
     );
-    // This is display/capture plumbing only: the app has not been launched yet.
-    await shot("display-capture-preflight.png");
     // A real source Gateway, not a mocked transport. The canary rejects inference.
     canary = http.createServer((req, res) => {
       if (req.method === "POST") providerPosts++;
@@ -883,8 +883,8 @@ async function main() {
           "Owned frontmost window changed before AX traversal",
         );
         report.window = confirmed;
-        const a = await ax("snapshot"); // Permission/unreadable/timeout failures are not readiness retries.
-        if (a.ready && a.enabled === true && a.selection.length === 1) {
+        const a = await ax("probe"); // Missing/ambiguous/slow targeted route is incomplete, never a guessed fallback.
+        if (a.complete) {
           beforeAX = a;
           break;
         }
@@ -927,9 +927,27 @@ async function main() {
       report.status = "preflight-ready";
       return; // finally still enforces inference, fatal-error, and owned-cleanup gates.
     }
-    const before = await call("sessions.list", { limit: 200 });
-    assert.ok(Array.isArray(before.sessions));
-    const beforeKeys = new Set(before.sessions.map((r) => r.key));
+    const inventory = async () =>
+      requireInventory(
+        await call("sessions.list", {
+          limit: 200,
+          archived: "all",
+          includeGlobal: true,
+          includeUnknown: true,
+        }),
+      );
+    const initial = await ax("copy-key");
+    requireCopyReceipt(initial, appProc.child.pid);
+    await save("initial-key.json", initial);
+    const before = await inventory();
+    await save("sessions-before.json", before);
+    const live = [...connections.keys()].filter((conn) => {
+      const c = connectionState(conn);
+      return c.client === "openclaw-macos" && c.role === "operator" && c.admitted && !c.closed;
+    });
+    assert.equal(live.length, 1, "Exactly one admitted native connection required before action");
+    proofConn = live[0];
+    requireLiveConnection(connectionState(proofConn));
     await save("before-ax.json", beforeAX);
     await shot("before.png", requireOwnedWindow(await ownedWindow(), appProc.child.pid));
     await sleep(1000);
@@ -956,7 +974,7 @@ async function main() {
     );
     const sampleDeadline = setTimeout(() => kill(sample), 14000);
     void sample.done.finally(() => clearTimeout(sampleDeadline));
-    const click = await ax("click");
+    const click = await ax("new");
     assert.equal(click.clicked, true);
     await save("click.json", click);
     assert.ok(
@@ -979,8 +997,8 @@ async function main() {
         metrics,
         baseline: appBaseline,
         rows: records,
-        beforeKeys,
-        after: await call("sessions.list", { limit: 200 }),
+        before,
+        after: await inventory(),
       });
       report.status = "expected-red";
       report.guard = guard;
@@ -994,40 +1012,42 @@ async function main() {
         await sleep(100);
       }
       assert.ok(key && !guard && !fatal, "No qualifying native creation/selection correlation");
-      proofConn = records.find(
-        (r) => r.t >= clickedAt && r.side === "req" && r.method === "sessions.create",
-      ).conn;
+      assert.equal(
+        records.find((r) => r.t >= clickedAt && r.side === "req" && r.method === "sessions.create")
+          .conn,
+        proofConn,
+        "Creation switched native connection",
+      );
       requireLiveConnection(connectionState(proofConn));
       finished = true;
       report.correlatedAt = Date.now(); // Stop only the action deadline; keep the memory guard.
-      const created = await call("sessions.list", { limit: 200 });
-      const added = created.sessions.filter((r) => !beforeKeys.has(r.key));
-      assert.equal(added.length, 1);
-      assert.equal(added[0].key, key);
-      assert.ok(added[0].sessionId);
-      const marker = "NT186215-" + randomBytes(16).toString("hex");
-      // Rename through the real owner, without selecting or reopening any UI row.
-      await call("sessions.patch", { key, expectedSessionId: added[0].sessionId, label: marker });
-      const after = await call("sessions.list", { limit: 200 });
-      let selected, session;
-      for (let t = Date.now(); Date.now() - t < 10000 && !guard && !fatal;) {
-        selected = await ax("snapshot");
-        try {
-          session = selectedSession(beforeKeys, after, key, selected, marker);
-          break;
-        } catch {}
-        await sleep(100);
-      }
-      assert.ok(session, "Newly created canonical session is not selected in the native sidebar");
-      await save("after-ax.json", selected);
-      await save("session.json", session);
+      const selected = await ax("copy-key");
+      requireCopyReceipt(selected, appProc.child.pid);
+      assert.equal(selected.key, key, "Native active key differs from canonical create response");
+      await save("selected-key.json", selected);
       await shot("after.png", requireOwnedWindow(await ownedWindow(), appProc.child.pid));
       await sleep(10000);
       assert.ok(!guard && !fatal && !appProc.closed, "Guard fired during stability observation");
       correlate(records, clickedAt);
-      const stable = await ax("snapshot");
-      selectedSession(beforeKeys, after, key, stable, marker);
-      await save("stable-ax.json", stable);
+      const stable = await ax("copy-key");
+      await save("stable-key.json", stable);
+      const ping = await ax("ping");
+      await save("stable-ping.json", ping);
+      const after = await inventory();
+      await save("sessions-after.json", after);
+      const session = requireActiveKey({
+        canonicalKey: key,
+        before,
+        after,
+        initial,
+        selected,
+        stable,
+        click,
+        ping,
+        pid: appProc.child.pid,
+      });
+      report.session = session;
+      await save("session.json", session);
       assert.equal((await call("health")).ok, true, "Gateway not healthy after stability interval");
       const finalStatus = JSON.parse(
         await run(
@@ -1116,6 +1136,8 @@ async function main() {
       (mode === "green" && guard)
     )
       report.status = "incomplete";
+    report.nativeUIProof =
+      mode !== "preflight" && ["expected-red", "green"].includes(report.status);
     report.guard = guard;
     report.providerPosts = providerPosts;
     await save("rpc.json", records);

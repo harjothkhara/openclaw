@@ -1,95 +1,104 @@
-# #186259 targeted-menu proof assessment
+# Native New Thread fork-only proof route
 
-Status: fork-only preparation, not a dispatched run or native-UI result.
-The targeted menu action is NOT adopted yet. Do not run the older startup-only
-packet as an automatic next build: the preferred sequence below supersedes it,
-subject to obtaining the shared canary source and passing receipt.
+This branch is infrastructure/proof only. Never add these files to PR #186259.
+The public product head remains 2b916adf3896eb18fb11d7702c9dd203fa1aaecf.
+True base: 1b50ce5a6835798634c4d98ac87891f4e5290120.
 
-## Verified source, not a duplicate-request hypothesis
+## Determining source and oracle
 
-Current upstream main inspected at14526249956c67b45143b44a459ec0da3f228b7b;
-true base1b50ce5a6835798634c4d98ac87891f4e5290120 and exact PR head
-2b916adf3896eb18fb11d7702c9dd203fa1aaecf remain the behavior-proof pins.
-The relevant shared transport/menu modules match across the proof pins.
+At both pins and inspected main14526249956c, the native six-argument protocol
+default calls the four-argument overload, whose Gateway default calls six again.
+The base Mac transport lacks the concrete six-argument overload: recursion is
+native and PRECEDES the RPC builder. Duplicate Gateway creates are not the red
+oracle. The fix adds that concrete route using the captured new-session lease.
 
-- ChatTransport.swift:1156 six-argument default, with nil explicit agent/base ref,
-  awaits the four-argument createSession.
-- ChatGatewayTransport.swift:141 four-argument default awaits that six-argument
-  overload again. Base/current-main Mac transport has no concrete six-argument
-  implementation. This is an async native protocol-dispatch cycle, NOT repeated
-  Gateway business requests. It never reaches the lease RPC builder.
-- The PR's concrete six-argument method acquires the existing Mac route lease;
-  only its createSession closure builds and dispatches the real Gateway request
-  (MacGatewayChatTransport+SessionActions.swift).
+File > New Thread is web-only. Native ChatWindowShell's toolbar Thread > New
+Thread calls viewModel.startNewSession(). Thread > Copy Session Key copies the
+production viewModel.sessionKey via ChatPasteboard's clear-then-set operation.
+The targeted helper uses that exact toolbar/menu, not File, keyboard shortcuts,
+coordinates, a full SwiftUI tree walk or a renamed sidebar row.
 
-Therefore base red cannot require duplicate Gateway requests. Zero requests alone
-also cannot prove recursion. Red retains an acknowledged native action plus the
-original positive recursive-stack signature and post-press allocating growth,
-a recognized bounded watchdog stop, zero create RPCs and unchanged durable keys.
-Timeout, silence, missing GUI or a failed canary alone is always incomplete.
+## One owner per proof responsibility
 
-## Source-correct native menu route
+- new-thread.mjs owns isolated source/profile/Gateway/app state, wire correlation,
+  memory/watchdog, health/liveness, inference rejection and bounded owned cleanup.
+- targeted-menu.swift owns bounded direct AX observation/action. Each message has
+  <=200ms timeout, ping/fixture1s, other operations3s; parent kills at4s and bounds
+  settlement at6s. Missing, ambiguous, untrusted or slow state stays incomplete.
+  probe is read-only and does not qualify menu-item attachment; new/copy-key do.
+- active-key.mjs composes fresh clipboard receipts, canonical response key, full
+  durable inventory,10s monotonic endpoint stability and post-stability AX ping.
+  It never returns a product verdict alone. The new ID must not alias ANY baseline
+  ID, and all old key-ID pairs survive. Complete list count/total/hasMore/nextOffset
+  are required by the caller; >200 isolated rows fail closed rather than truncate.
+- The immutable shared canary remains owned by #185529, read-only checkout at
+  13cde4984372bef34402ae61ff7891379626f260. qualified-canary.mjs calls its exported
+  capture/runner diagnostic, then starts that SAME fixture briefly to qualify
+  this exact compiled AX binary. The fixture is borderless/accessory, so only
+  helper action fixture may omit product frontmost/focused-window requirements;
+  it is strictly read-only AXWindows. Product ping/probe/new/copy retain them.
+  No cloned fixture or weakened shared oracle is introduced.
 
-Do NOT press File > New Thread: MenuBar.swift:105 installs that command only when
-nativeExperienceEnabled is false, where it calls the Dashboard web command.
+The previous JXA full-tree helper, baseline fixture, row/rename selection helper
+and their obsolete tests were removed. Shared direct AX+capture canary replaces
+coarse System Events/desktop preflight. Only owned app windows are captured.
+Necessary growth is native AX/clipboard and cross-process qualification code;
+none enters the public product PR. Local Node contracts are NOT native proof.
 
-The native window's toolbar Thread menu is different:
-ChatWindowShell.swift:362 New Thread calls viewModel.startNewSession(), which
-reaches performStartNewSession and the same six-argument transport as the sidebar.
-The menu is labeled Thread with help Thread actions (:523-535), and its item is
-New Thread. The production source has no stable menu accessibilityIdentifier,
-so do not guess a global menu selector or fall back to an unrelated item.
+## Serial dispatch contract
 
-After the shared canary qualifies targeted AX, use a bounded query confined to
-the owned native window's toolbar and its opened Thread menu. Require one enabled
-Thread menu, then one enabled exact New Thread AXMenuItem; perform AXPress once.
-Never traverse the SwiftUI content/sidebar tree, silently use coordinates, or
-route through File's web-only command. The actual AX role/path still requires
-native qualification; this source assessment does not claim its runtime shape.
+An authorized coordinator must read back the intended published proof SHA and
+confirm no other live Mac proof run BEFORE dispatch. Inputs:
 
-## Authoritative green selection without sidebar recursion
+    target_sha: 2b916adf3896eb18fb11d7702c9dd203fa1aaecf
+    serial_confirmed: true
+    ax_preflight_only: false
 
-Thread > Copy Session Key is an existing production UI action (:477-479) that
-copies viewModel.sessionKey. adoptCreatedSession (:1257 in ChatViewModel.swift)
-sets that field after successful creation and bootstraps the selected session.
+Use workflow ci.yml on proof/mac-new-thread-186215-2026-10-27, macos-26-intel.
+serial_confirmed defaults false; Ubuntu admission refuses false or a job rerun
+before allocating Mac. The existing shared concurrency group remains unchanged;
+it supplements, never replaces, coordinator admission. No run was dispatched here.
 
-Use a fresh clipboard sentinel/change-count receipt in the disposable runner,
-AXPress Copy Session Key in that same owned native Thread menu, and require the
-new clipboard value equal the successful Gateway create response's canonical key.
-Pair it with exactly one native create request, correlated same-connection success
-and subsequent subscribe/history receipts, and one new durable Gateway session ID.
-Repeat active-key equality, a cheap bounded AX app/window ping, live native
-connection and app memory/liveness after the stability interval. Copying a stale
-clipboard string, transport traffic alone, or a current-main helper test is not
-an active-selection proof. This replaces the expensive selected-row/rename oracle
-only once the targeted path is proven; no observer-driven selection/reopen is allowed.
+Compilation and cheap shared/exact-helper qualification run BEFORE packaging.
+The same job then reuses exact-SHA native caches, builds true base, verifies its
+bundle/runtime identities and complete config, starts isolated Gateway and app,
+requires an owned frontmost onscreen window and captures it before targeted AX.
+After base red qualifies, it builds/runs exact PR head and requires green.
 
-## Canary and build sequencing
+Base red requires one acknowledged native menu action, overlapping sampler,
+original repeated recursive stack signatures, positive post-press allocation
+growth and recognized bounded watchdog stop. No create RPCs and unchanged durable
+key-ID inventory corroborate recursion; silence or timeout alone never pass.
+Green requires exactly one native create RPC/canonical response and same admitted
+connection subscribe/history, fresh active-key copies before/after action and
+at least10s later, a genuinely new durable ID, cheap final AX ping, live app and
+Gateway/connection, no guard/inference, then verified cleanup. No action retry.
 
-Reuse the exact known-good AppKit fixture owned by #185529; do not create a competing
-fixture or edit that lane. Its helper-only result is diagnostic, not #186259 proof.
-A separate hosted run uses a fresh VM: its successful receipt qualifies the approach,
-not another job's live AX/capture permission. Pin and run the same cheap fixture
-at the start of the actual #186259 Mac job, before app packaging, to verify an
-unlocked/display-capable session, cross-process nonblank capture, AX trust and
-fast targeted queries on THAT runner. Native window/route gates still apply to
-the real app after packaging and before the action.
+Optional ax_preflight_only:true is startup/Thread-target diagnostics only. It
+never opens/presses a menu or copies the clipboard, forbids creation/inference,
+skips green packaging and ends preflight-ready/nativeUIProof=false, not product
+proof. A full build solely for startup is not preferred after a passing cheap
+canary; this input is an explicit diagnostic fallback.
 
-Once qualified, fold startup gates into one serial true-base red / exact-head green
-real-app run. This avoids packaging the same base just to run startup-only and
-then packaging it again for behavior. Retain startup-only only as an explicit
-fallback diagnostic; it is not the recommended extra build after a good canary.
-If the fixture or actual window/menu gate fails, stop before the action, preserve
-sanitized diagnostics, and do not infer a product red/green verdict.
+## Evidence and limits
 
-The verified public #185529 proof head d4531bad565 does not yet contain the new
-helper-only cross-process fixture canary; only its old pixel selftest is present.
-Need its immutable source SHA/interface and passing receipt before wiring that
-external contract or adopting an AX selector. No fabricated canary pass/input.
+Artifact mac-new-thread-real-app-<run>-<attempt> contains the shared runner and
+exact-helper receipts, compile logs, per-arm verdict/source/runtime hashes,
+Gateway/config/stdout/stderr diagnostics, bounded AX stages/last command, wire
+records, memory/stack, durable inventories and owned-window captures as reached.
+Missing or failed setup remains incomplete; a successful workflow is insufficient
+without inspecting exact-arm verdicts, logs and captures. PNG geometry alone is
+not painted-content proof; images need inspection. Selection is sampled at the
+endpoints, not asserted continuously visible.
 
-The coordinator remains the single owner of cross-lane Mac allocation and must
-prioritize #185529 and check queued/running jobs immediately before dispatch. This
-revision does not change scheduling: merely joining a workflow concurrency group
-can replace another pending run in GitHub, even with cancel-in-progress=false.
-Do not treat a per-lane concurrency group as cross-lane exclusion. No Mac job is
-dispatched by this change.
+Retained product receipts: native base test red40568043055; exact-head native
+35/35+SwiftFormat/SwiftLint green40577761227. Real-app40598236532 was incomplete
+at AX snapshot BEFORE New Thread, with no green arm. The old Finder/Dock image
+was taken BEFORE app launch and does not prove postlaunch window absence.
+Shared diagnostic40648820698 passed, but is not OpenClaw/New Thread proof and
+cannot transfer executable-specific permissions to another VM/binary.
+
+Local qualification: Node contracts, syntax, YAML/bash/gate checks and fresh
+source review. Native Swift compilation/AX shape/menu/clipboard/latency and app
+behavior remain UNVERIFIED until the coordinated hosted run. No real-app green,
+review rating or ready-for-maintainer-look claim is made by this branch.
