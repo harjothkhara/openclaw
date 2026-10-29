@@ -182,9 +182,10 @@ async function main() {
   assert.equal(process.platform, "darwin");
   assert.equal(process.env.GITHUB_ACTIONS, "true");
   assert.equal(process.env.GITHUB_REPOSITORY, "harjothkhara/openclaw");
+  assert.equal(process.env.GITHUB_REF, "refs/heads/proof/mac-new-thread-186215-2026-10-27");
   assert.equal(process.env.RUNNER_ENVIRONMENT, "github-hosted");
   assert.match(process.env.GITHUB_RUN_ID || "", /^[0-9]+$/);
-  assert.match(process.env.GITHUB_RUN_ATTEMPT || "", /^[0-9]+$/);
+  assert.equal(process.env.GITHUB_RUN_ATTEMPT, "1");
   assert.match(process.env.GITHUB_SHA || "", /^[a-f0-9]{40}$/);
   const args = Object.fromEntries(
     Array.from({ length: (process.argv.length - 2) / 2 }, (_, i) => [
@@ -820,13 +821,16 @@ async function main() {
       });
       for (const socket of [client, upstream])
         socket.on("error", (e) => {
-          if (!shuttingDown) fatal = e;
+          if (!expectedRelayTermination()) fatal = e;
         });
+      function expectedRelayTermination() {
+        return shuttingDown || (mode === "red" && guard !== null);
+      }
       function closed() {
         if (state.closed) return;
         state.closed = true;
         state.admitted = false;
-        const expected = shuttingDown || (mode === "red" && guard !== null);
+        const expected = expectedRelayTermination();
         records.push({
           t: Date.now(),
           side: "lifecycle",
@@ -1020,7 +1024,7 @@ async function main() {
       actionDeadlineAt = Date.now() + 10000;
       while (!guard && !fatal && !appProc.closed) await sleep(50);
       assert.ok(guard && !fatal, "Base did not reach a recognized watchdog stop");
-      await sample.done;
+      await bounded("Stack sampler settlement", sample.done, 16000);
       sampleText = await evidenceWriter.readText(sample.logPath);
       await save("stack.txt", sampleText);
       report.redStackCounts = [
@@ -1167,7 +1171,8 @@ async function main() {
         { name: "gateway-stdout.log", text: gateway?.stdout ?? "", overflow: gateway?.overflow },
         { name: "gateway-stderr.log", text: gateway?.stderr ?? "", overflow: gateway?.overflow },
         ...processes
-          .filter((p) => p.label !== "sample")
+          .filter((p) => p.label !== "sample" && (p.label !== "memory" || p.exit?.code !== 0))
+          .reverse() // Retain final diagnostics before earlier verbose startup logs.
           .map((p) => ({ name: path.basename(p.logPath), file: p.logPath, overflow: p.overflow })),
       ],
     });

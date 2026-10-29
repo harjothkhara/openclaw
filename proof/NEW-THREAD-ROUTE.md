@@ -32,7 +32,10 @@ coordinates, a full SwiftUI tree walk or a renamed sidebar row.
   after at most 2s. Optional export has a 32 MiB/128-file/5s collection budget;
   over-budget/overflowed logs are omitted with metadata, not partial secret-bearing
   prefixes. Required failure makes the outcome incomplete. Optional export cannot
-  erase the retained verdict. Both workflow gates independently verify the mode's
+  erase the retained verdict. Successful high-frequency ps logs are omitted from
+  verbose export; failed probes remain, and newest diagnostics have priority.
+  The required memory.json and command records are unchanged. Both workflow gates
+  independently verify the mode's
   required file set, byte counts and hashes using manifest schema2. Filesystem/VM
   failure can still prevent writes; retained start data never implies success.
 - owned-processes.mjs owns captured PGIDs, live-leader authority immediately before
@@ -81,9 +84,14 @@ workflow declares the proof inputs/jobs; its default-branch counterpart remains
 normal Periphery. Registration and branch-source support are verified, not
 authenticated dispatch acceptance or permission. Canonical ci.yml is restored
 byte-for-byte from exact product head; no fork-main workflow is changed.
-serial_confirmed defaults false; Ubuntu admission refuses false or a job rerun
-before allocating Mac. The existing shared concurrency group remains unchanged;
-it supplements, never replaces, coordinator admission. No run was dispatched here.
+serial_confirmed defaults false. Ubuntu admission explicitly rejects the wrong
+repository/ref, absent serial confirmation and any rerun; scope failure is a failed
+job, not only a skipped Mac job. The first Mac step repeats first-attempt admission
+before checkout/build because partial reruns can reuse successful Ubuntu admission.
+The driver and both verdict gates independently reject attempt2. A partial rerun
+can still allocate a runner before that first step fails; it cannot qualify proof
+or grant the coordinator's shared slot. The existing concurrency group remains
+unchanged and supplements, never replaces, coordinator admission. No dispatch here.
 
 Compilation and cheap shared/exact-helper qualification run BEFORE packaging.
 The same job then reuses exact-SHA native caches, builds true base, verifies its
@@ -98,6 +106,10 @@ remains incomplete, even with partial stack/allocation evidence: this route does
 not yet establish a causally classified crash receipt. It never treats a bare
 crash, timeout or disconnect as red. No create RPCs and unchanged durable
 key-ID inventory corroborate recursion; silence or timeout alone never pass.
+A relay reset after the recognized red stop is expected teardown, using the same
+predicate as socket closure. Resets before a guard or during green remain fatal;
+other evidence failures are not cleared. Sampler pipe settlement has a16s bound
+once awaited after the guard, including when its leader exited with pipes open.
 Action helpers retain independent 4s kill/6s settlement bounds (ping/fixture use
 2s/4s). Memory monitoring starts before the press and continues through stability.
 Only red

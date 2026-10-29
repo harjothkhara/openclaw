@@ -30,6 +30,9 @@ jobs:
         env:
           SERIAL_CONFIRMED: ${{ inputs.serial_confirmed }}
         run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = harjothkhara/openclaw
+          test "$GITHUB_REF" = refs/heads/proof/mac-new-thread-186215-2026-10-27
           test "$SERIAL_CONFIRMED" = true
           test "$GITHUB_RUN_ATTEMPT" = 1
   mac-new-thread-real-app:
@@ -41,6 +44,11 @@ jobs:
       BASE_SHA: 1b50ce5a6835798634c4d98ac87891f4e5290120
       TARGET_SHA: ${{ inputs.target_sha }}
     steps:
+      - name: Reject partial reruns before any Mac proof work
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_RUN_ATTEMPT" = 1
       - name: Check out fork-only proof driver
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -163,7 +171,7 @@ jobs:
           const root = 'new-thread-red/evidence/';
           const r = await verifyEvidenceDirectory(root, 'preflight');
           const rpc = JSON.parse(fs.readFileSync(root + 'rpc.json', 'utf8'));
-          if (r.mode !== 'preflight' || r.status !== 'preflight-ready' || r.nativeUIProof !== false ||
+          if (r.mode !== 'preflight' || r.attempt !== '1' || process.env.GITHUB_RUN_ATTEMPT !== '1' || r.status !== 'preflight-ready' || r.nativeUIProof !== false ||
               r.sourceSha !== process.env.BASE_SHA || r.workflowSha !== process.env.GITHUB_SHA ||
               r.providerPosts !== 0 || r.cleanup !== 'owned-process-groups-retired' || r.clickedAt ||
               r.window?.ready !== true || r.window?.frontmost !== true || r.window?.hidden !== false ||
@@ -220,7 +228,7 @@ jobs:
             ['green', 'green', process.env.TARGET_SHA],
           ]) {
             const r = await verifyEvidenceDirectory('new-thread-' + arm + '/evidence', arm);
-            if (r.mode !== arm || r.workflowSha !== process.env.GITHUB_SHA || r.status !== status || r.sourceSha !== sha || r.providerPosts !== 0 ||
+            if (r.mode !== arm || r.attempt !== '1' || process.env.GITHUB_RUN_ATTEMPT !== '1' || r.workflowSha !== process.env.GITHUB_SHA || r.status !== status || r.sourceSha !== sha || r.providerPosts !== 0 ||
                 r.cleanup !== 'owned-process-groups-retired' ||
                 r.nativeUIProof !== true ||
                 (arm === 'red' && r.redBoundary?.kind !== 'native-recursion-before-rpc') ||
