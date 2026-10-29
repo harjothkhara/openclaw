@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { requireInventory, requirePreflightSnapshot } from "./new-thread.mjs";
@@ -59,7 +60,10 @@ for (const method of ["sessions.create", "chat.send", "agent"])
   test("preflight refuses " + method, () =>
     assert.throws(() => requirePreflightSnapshot(probe, [{ side: "req", method }])),
   );
-const workflow = await readFile(new URL("../.github/workflows/ci.yml", import.meta.url), "utf8");
+const workflow = await readFile(
+  new URL("../.github/workflows/macos-periphery.yml", import.meta.url),
+  "utf8",
+);
 test("serial first-attempt admission precedes Mac allocation and shared canary precedes app packaging", () => {
   assert.match(workflow, /SERIAL_CONFIRMED.*inputs.serial_confirmed/);
   assert.match(workflow, /test "\$SERIAL_CONFIRMED" = true/);
@@ -71,4 +75,15 @@ test("serial first-attempt admission precedes Mac allocation and shared canary p
   );
   assert.ok(workflow.includes("13cde4984372bef34402ae61ff7891379626f260"));
   assert.ok(workflow.includes("new-thread-runner/evidence/"));
+});
+
+test("proof entry point preserves canonical CI and pins every proof Action", async () => {
+  const ci = await readFile(new URL("../.github/workflows/ci.yml", import.meta.url));
+  assert.equal(
+    createHash("sha256").update(ci).digest("hex"),
+    "14dae8ab0260c71c6b2dee5d12b27ac4ac38121707ab16b69f06eec1f2202ed3",
+  );
+  const actions = [...workflow.matchAll(/^\s*uses:\s+(\S+)/gm)].map((match) => match[1]);
+  assert.ok(actions.length > 0);
+  for (const action of actions) assert.match(action, /^[^@]+@[0-9a-f]{40}$/);
 });

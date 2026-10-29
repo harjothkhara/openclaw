@@ -238,7 +238,7 @@ async function main() {
     fatal = null,
     guard = null,
     watchdog = null,
-    finished = false;
+    actionDeadlineAt = null;
   let monitoring = false,
     monitorTask = null,
     shuttingDown = false;
@@ -464,7 +464,7 @@ async function main() {
     assert.ok(values.every(Number.isFinite));
     return { t: Date.now(), rssKiB: values[0], vszKiB: values[1] };
   }
-  async function monitor(started) {
+  async function monitor() {
     if (!monitoring) return;
     try {
       const m = await ps();
@@ -477,7 +477,7 @@ async function main() {
             ? "vsz-growth"
             : m.rssKiB > 3 * 1024 * 1024
               ? "rss-ceiling"
-              : !finished && Date.now() - started > 10000
+              : actionDeadlineAt !== null && Date.now() > actionDeadlineAt
                 ? "action-deadline"
                 : null;
       if (reason) {
@@ -487,7 +487,7 @@ async function main() {
       }
       if (monitoring)
         watchdog = setTimeout(() => {
-          monitorTask = monitor(started);
+          monitorTask = monitor();
         }, 100);
     } catch (error) {
       if (monitoring) {
@@ -956,7 +956,7 @@ async function main() {
     const clickedAt = Date.now();
     report.clickedAt = clickedAt;
     monitoring = true;
-    monitorTask = monitor(clickedAt);
+    monitorTask = monitor();
     await monitorTask;
     report.sampleStartedAt = Date.now();
     // Cover the entire bounded AX traversal and action window, not only pre-click idle time.
@@ -982,6 +982,9 @@ async function main() {
       "Stack sampler did not cover the acknowledged AXPress",
     );
     if (mode === "red") {
+      // AX owns its bounded press; only red needs a post-acknowledgement stop.
+      // Green owns a separate correlation budget below, while memory stays guarded.
+      actionDeadlineAt = Date.now() + 10000;
       while (!guard && !fatal && !appProc.closed) await sleep(50);
       assert.ok(guard && !fatal, "Base did not reach a recognized watchdog stop");
       await sample.done;
@@ -1019,8 +1022,7 @@ async function main() {
         "Creation switched native connection",
       );
       requireLiveConnection(connectionState(proofConn));
-      finished = true;
-      report.correlatedAt = Date.now(); // Stop only the action deadline; keep the memory guard.
+      report.correlatedAt = Date.now(); // Memory protection continues through stability.
       const selected = await ax("copy-key");
       requireCopyReceipt(selected, appProc.child.pid);
       assert.equal(selected.key, key, "Native active key differs from canonical create response");
@@ -1074,7 +1076,7 @@ async function main() {
     monitoring = false;
     shuttingDown = true;
     clearTimeout(watchdog);
-    finished = true;
+    actionDeadlineAt = null;
     const cleanupErrors = [];
     try {
       await saveGatewayDiagnostics("before-cleanup");

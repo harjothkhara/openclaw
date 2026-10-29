@@ -20,6 +20,12 @@ test("positive native recursion evidence may have zero Gateway requests", () => 
 });
 for (const [name, mutate] of [
   [
+    "process crash without a recognized watchdog despite stack and allocation evidence",
+    (r) => {
+      r.guard = null;
+    },
+  ],
+  [
     "zero RPCs and timeout alone",
     (r) => {
       r.stackCounts = [0, 0];

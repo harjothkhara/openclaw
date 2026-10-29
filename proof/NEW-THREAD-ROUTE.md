@@ -54,7 +54,12 @@ confirm no other live Mac proof run BEFORE dispatch. Inputs:
     serial_confirmed: true
     ax_preflight_only: false
 
-Use workflow ci.yml on proof/mac-new-thread-186215-2026-10-27, macos-26-intel.
+Use registered workflow macos-periphery.yml (ID 332474845) on
+proof/mac-new-thread-186215-2026-10-27, macos-26-intel. The proof-branch
+workflow declares the proof inputs/jobs; its default-branch counterpart remains
+normal Periphery. Registration and branch-source support are verified, not
+authenticated dispatch acceptance or permission. Canonical ci.yml is restored
+byte-for-byte from exact product head; no fork-main workflow is changed.
 serial_confirmed defaults false; Ubuntu admission refuses false or a job rerun
 before allocating Mac. The existing shared concurrency group remains unchanged;
 it supplements, never replaces, coordinator admission. No run was dispatched here.
@@ -67,8 +72,16 @@ After base red qualifies, it builds/runs exact PR head and requires green.
 
 Base red requires one acknowledged native menu action, overlapping sampler,
 original repeated recursive stack signatures, positive post-press allocation
-growth and recognized bounded watchdog stop. No create RPCs and unchanged durable
+growth and recognized bounded watchdog stop. A crash before a recognized watchdog
+remains incomplete, even with partial stack/allocation evidence: this route does
+not yet establish a causally classified crash receipt. It never treats a bare
+crash, timeout or disconnect as red. No create RPCs and unchanged durable
 key-ID inventory corroborate recursion; silence or timeout alone never pass.
+The AX helper retains its independent 4s kill/6s settlement bounds. Memory
+monitoring starts before the press and continues through stability. Only red
+arms the 10s action watchdog after acknowledgement; green instead gets its own
+10s correlation budget after the bounded press returns. A slow valid press must
+not consume that correlation budget.
 Green requires exactly one native create RPC/canonical response and same admitted
 connection subscribe/history, fresh active-key copies before/after action and
 at least10s later, a genuinely new durable ID, cheap final AX ping, live app and
