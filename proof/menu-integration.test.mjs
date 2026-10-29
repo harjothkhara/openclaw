@@ -62,7 +62,7 @@ for (const method of ["sessions.create", "chat.send", "agent"])
     assert.throws(() => requirePreflightSnapshot(probe, [{ side: "req", method }])),
   );
 const workflow = await readFile(
-  new URL("../.github/workflows/macos-periphery.yml", import.meta.url),
+  new URL("../.github/workflows/mac-new-thread-proof.yml", import.meta.url),
   "utf8",
 );
 test("serial first-attempt admission precedes Mac allocation and shared canary precedes app packaging", () => {

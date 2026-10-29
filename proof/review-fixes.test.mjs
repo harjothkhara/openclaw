@@ -10,7 +10,7 @@ import { bounded, requireRecursiveRed } from "./new-thread.mjs";
 
 const source = await readFile(new URL("./new-thread.mjs", import.meta.url), "utf8");
 const workflow = await readFile(
-  new URL("../.github/workflows/macos-periphery.yml", import.meta.url),
+  new URL("../.github/workflows/mac-new-thread-proof.yml", import.meta.url),
   "utf8",
 );
 const repository = "harjothkhara/openclaw";

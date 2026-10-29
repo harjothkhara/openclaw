@@ -78,20 +78,23 @@ confirm no other live Mac proof run BEFORE dispatch. Inputs:
     serial_confirmed: true
     ax_preflight_only: false
 
-Use registered workflow macos-periphery.yml (ID 332474845) on
-proof/mac-new-thread-186215-2026-10-27, macos-26-intel. The proof-branch
-workflow declares the proof inputs/jobs; its default-branch counterpart remains
-normal Periphery. Registration and branch-source support are verified, not
-authenticated dispatch acceptance or permission. Canonical ci.yml is restored
-byte-for-byte from exact product head; no fork-main workflow is changed.
+Use the fork-only `mac-new-thread-proof.yml` workflow on
+`proof/mac-new-thread-186215-2026-10-27` with `macos-26-intel`. A fail-closed
+registration stub on the fork's default branch makes the manual workflow
+available; the proof branch supplies the actual jobs. Verify registration and
+branch-source support before dispatch. The canonical Periphery workflow remains
+unchanged. Canonical ci.yml is restored byte-for-byte from exact product head.
 serial_confirmed defaults false. Ubuntu admission explicitly rejects the wrong
 repository/ref, absent serial confirmation and any rerun; scope failure is a failed
 job, not only a skipped Mac job. The first Mac step repeats first-attempt admission
 before checkout/build because partial reruns can reuse successful Ubuntu admission.
 The driver and both verdict gates independently reject attempt2. A partial rerun
 can still allocate a runner before that first step fails; it cannot qualify proof
-or grant the coordinator's shared slot. The existing concurrency group remains
-unchanged and supplements, never replaces, coordinator admission. No dispatch here.
+or grant the coordinator's shared slot. The proof concurrency group queues a
+duplicate dispatch rather than rejecting it. `serial_confirmed` records the
+coordinator's check at dispatch time; it is not revalidated when a queued run
+starts. The coordinator must prevent duplicate dispatches and check the shared
+Mac slot immediately before each dispatch. No dispatch here.
 
 Compilation and cheap shared/exact-helper qualification run BEFORE packaging.
 The same job then reuses exact-SHA native caches, builds true base, verifies its

@@ -7,22 +7,6 @@ on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review, converted_to_draft]
   workflow_dispatch:
-    inputs:
-      target_sha:
-        description: Exact upstream PR head SHA
-        required: false
-        default: ''
-        type: string
-      serial_confirmed:
-        description: Coordinator explicitly confirmed no other active Mac proof run
-        required: false
-        default: false
-        type: boolean
-      ax_preflight_only:
-        description: Startup/AX diagnostics only; never qualifies as red/green proof
-        required: false
-        default: true
-        type: boolean
   workflow_call:
     inputs:
       shared_only:
@@ -36,10 +20,10 @@ concurrency:
   # Admission precedes scope skips: isolate passive drafts before they can cancel useful work.
   # Keep conversion events in the PR group as an intentional cancellation signal.
   group: >-
-    ${{ github.event_name == 'workflow_dispatch' && inputs.target_sha != '' && 'mac-new-thread-186215-real-app' || github.event_name == 'pull_request' && github.event.pull_request.draft && github.event.action != 'converted_to_draft'
+    ${{ github.event_name == 'pull_request' && github.event.pull_request.draft && github.event.action != 'converted_to_draft'
       && format('{0}-passive-draft-{1}', github.workflow, github.run_id)
       || format('macos-periphery-{0}-{1}', github.workflow, github.event.pull_request.number || github.sha) }}
-  cancel-in-progress: ${{ !(github.event_name == 'workflow_dispatch' && inputs.target_sha != '') }}
+  cancel-in-progress: true
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
@@ -49,7 +33,6 @@ permissions:
 
 jobs:
   scope:
-    if: ${{ github.event_name != 'workflow_dispatch' || inputs.target_sha == '' }}
     name: Detect macOS scan scope
     runs-on: ubuntu-24.04
     outputs:
@@ -806,240 +789,3 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
           overwrite: true
-  admission:
-    if: github.event_name == 'workflow_dispatch' && inputs.target_sha != ''
-    runs-on: ubuntu-latest
-    steps:
-      - name: Require explicit coordinator serial admission and first attempt
-        env:
-          SERIAL_CONFIRMED: ${{ inputs.serial_confirmed }}
-        run: |
-          set -euo pipefail
-          test "$GITHUB_REPOSITORY" = harjothkhara/openclaw
-          test "$GITHUB_REF" = refs/heads/proof/mac-new-thread-186215-2026-10-27
-          test "$SERIAL_CONFIRMED" = true
-          test "$GITHUB_RUN_ATTEMPT" = 1
-  mac-new-thread-real-app:
-    needs: admission
-    if: github.repository == 'harjothkhara/openclaw' && github.ref == 'refs/heads/proof/mac-new-thread-186215-2026-10-27'
-    runs-on: macos-26-intel
-    timeout-minutes: 120
-    env:
-      BASE_SHA: 1b50ce5a6835798634c4d98ac87891f4e5290120
-      TARGET_SHA: ${{ inputs.target_sha }}
-    steps:
-      - name: Reject partial reruns before any Mac proof work
-        shell: bash
-        run: |
-          set -euo pipefail
-          test "$GITHUB_RUN_ATTEMPT" = 1
-      - name: Check out fork-only proof driver
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-        with:
-          path: proof-runner
-          persist-credentials: false
-          sparse-checkout: |
-            proof
-            package.json
-            .github/workflows
-      - name: Check out immutable shared AppKit canary
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
-        with:
-          repository: harjothkhara/openclaw
-          ref: 13cde4984372bef34402ae61ff7891379626f260
-          path: shared-canary
-          persist-credentials: false
-          sparse-checkout: |
-            proof/mac-accent-185529
-            .github/workflows/ci.yml
-      - name: Check out exact unfixed source
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-        with:
-          repository: openclaw/openclaw
-          ref: ${{ env.BASE_SHA }}
-          path: sut-red
-          persist-credentials: false
-      - name: Check out exact PR source
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-        with:
-          repository: openclaw/openclaw
-          ref: ${{ env.TARGET_SHA }}
-          path: sut-green
-          persist-credentials: false
-      - name: Verify exact source and driver
-        shell: bash
-        run: |
-          set -euo pipefail
-          [[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]]
-          [[ "$(git -C sut-red rev-parse HEAD)" == "$BASE_SHA" ]]
-          [[ "$(git -C sut-green rev-parse HEAD)" == "$TARGET_SHA" ]]
-          branch_sha="$(git ls-remote https://github.com/openclaw/openclaw.git refs/heads/openclaw/marine-crayfish-3 | cut -f1)"
-          [[ "$branch_sha" == "$TARGET_SHA" ]]
-          [[ "$(git -C proof-runner rev-parse HEAD)" == "$GITHUB_SHA" ]]
-          [[ "$(git -C shared-canary rev-parse HEAD)" == 13cde4984372bef34402ae61ff7891379626f260 ]]
-          (cd proof-runner/proof && shasum -a 256 -c PROOF_SHA256SUMS)
-          (cd shared-canary/proof/mac-accent-185529 && shasum -a 256 -c HELPER_SHA256SUMS)
-          node --check proof-runner/proof/new-thread.mjs
-          printf 'Base %s\nPR %s\nWorkflow %s\n' "$BASE_SHA" "$TARGET_SHA" "$GITHUB_SHA"
-      - name: Set up pnpm
-        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
-        with:
-          version: 12.15.0
-          run_install: false
-      - name: Select supported Node
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
-        with:
-          node-version: 24.22.1
-      - name: Compile and qualify actual helpers on shared fixture before packaging
-        timeout-minutes: 4
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p new-thread-runner/evidence
-          node --test proof-runner/proof/*.test.mjs > new-thread-runner/evidence/node-controls.log 2>&1
-          xcrun swiftc -parse-as-library proof-runner/proof/targeted-menu.swift -o "$RUNNER_TEMP/new-thread-targeted-menu" > new-thread-runner/evidence/helper-compile.log 2>&1
-          xcrun swiftc shared-canary/proof/mac-accent-185529/window.swift -o "$RUNNER_TEMP/accent-window-helper" >> new-thread-runner/evidence/helper-compile.log 2>&1
-          xcrun swiftc shared-canary/proof/mac-accent-185529/runner-fixture.swift -o "$RUNNER_TEMP/accent-runner-fixture" >> new-thread-runner/evidence/helper-compile.log 2>&1
-          xcrun swiftc shared-canary/proof/mac-accent-185529/runner-probe.swift -o "$RUNNER_TEMP/accent-runner-probe" >> new-thread-runner/evidence/helper-compile.log 2>&1
-          export OPENCLAW_NEW_THREAD_AX_HELPER="$RUNNER_TEMP/new-thread-targeted-menu"
-          export OPENCLAW_SHARED_CANARY_DIR="$GITHUB_WORKSPACE/shared-canary/proof/mac-accent-185529"
-          node proof-runner/proof/qualified-canary.mjs
-          echo "OPENCLAW_NEW_THREAD_AX_HELPER=$OPENCLAW_NEW_THREAD_AX_HELPER" >> "$GITHUB_ENV"
-          echo "OPENCLAW_NEW_THREAD_AX_HELPER_SHA256=$(shasum -a 256 "$OPENCLAW_NEW_THREAD_AX_HELPER" | cut -d ' ' -f1)" >> "$GITHUB_ENV"
-      - name: Compile independent window observer before packaging
-        timeout-minutes: 2
-        shell: bash
-        run: |
-          set -euo pipefail
-          xcrun swiftc -parse-as-library proof-runner/proof/new-thread-window.swift -o "$RUNNER_TEMP/new-thread-window-observer"
-          "$RUNNER_TEMP/new-thread-window-observer" --selftest
-          echo "OPENCLAW_NEW_THREAD_WINDOW_HELPER=$RUNNER_TEMP/new-thread-window-observer" >> "$GITHUB_ENV"
-          echo "OPENCLAW_NEW_THREAD_WINDOW_HELPER_SHA256=$(shasum -a 256 "$RUNNER_TEMP/new-thread-window-observer" | cut -d ' ' -f1)" >> "$GITHUB_ENV"
-      - name: Restore exact base native build
-        id: base-cache
-        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
-        with:
-          path: sut-red/apps/macos/.build
-          key: mac-new-thread-package-macos-26-intel-${{ env.BASE_SHA }}-${{ hashFiles('sut-red/apps/macos/Package.resolved') }}
-      - name: Build unfixed Mac app and Gateway
-        shell: bash
-        run: |
-          set -euo pipefail
-          cd sut-red
-          BUILD_ARCHS="$(uname -m)" BUILD_CONFIG=debug ALLOW_ADHOC_SIGNING=1 OPENCLAW_SKIP_MLX_TTS=1 \
-            /bin/bash scripts/package-mac-app.sh > "$GITHUB_WORKSPACE/red-package.log" 2>&1
-      - name: Save exact base native build
-        if: ${{ steps.base-cache.outputs.cache-hit != 'true' }}
-        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
-        with:
-          path: sut-red/apps/macos/.build
-          key: mac-new-thread-package-macos-26-intel-${{ env.BASE_SHA }}-${{ hashFiles('sut-red/apps/macos/Package.resolved') }}
-      - name: Run base startup preflight or guarded red control
-        timeout-minutes: 10
-        shell: bash
-        run: |
-          set -euo pipefail
-          mode=red
-          if [[ "${{ inputs.ax_preflight_only }}" == true ]]; then mode=preflight; fi
-          /usr/bin/perl -e 'alarm 600; exec @ARGV' node proof-runner/proof/new-thread.mjs \
-            --source "$GITHUB_WORKSPACE/sut-red" --app "$GITHUB_WORKSPACE/sut-red/dist/OpenClaw.app" \
-            --sha "$BASE_SHA" --mode "$mode" --out "$GITHUB_WORKSPACE/new-thread-red"
-      - name: Require startup-only no-action verdict
-        if: ${{ inputs.ax_preflight_only }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          node --input-type=module - <<'NODE'
-          import fs from 'node:fs';
-          import { verifyEvidenceDirectory } from './proof-runner/proof/evidence.mjs';
-          const root = 'new-thread-red/evidence/';
-          const r = await verifyEvidenceDirectory(root, 'preflight');
-          const rpc = JSON.parse(fs.readFileSync(root + 'rpc.json', 'utf8'));
-          if (r.mode !== 'preflight' || r.attempt !== '1' || process.env.GITHUB_RUN_ATTEMPT !== '1' || r.status !== 'preflight-ready' || r.nativeUIProof !== false ||
-              r.sourceSha !== process.env.BASE_SHA || r.workflowSha !== process.env.GITHUB_SHA ||
-              r.providerPosts !== 0 || r.cleanup !== 'owned-process-groups-retired' || r.clickedAt ||
-              r.window?.ready !== true || r.window?.frontmost !== true || r.window?.hidden !== false ||
-              r.window?.registered !== true || r.window?.executableMatches !== true ||
-              r.window?.windows?.length !== 1 || !fs.statSync(root + 'window-before-ax.png').size ||
-              rpc.some(x => x.side === 'req' && ['sessions.create', 'chat.send', 'agent'].includes(x.method))) {
-            throw Error('Startup preflight failed its no-action contract');
-          }
-          NODE
-      - name: Release disposable base checkout
-        if: ${{ !inputs.ax_preflight_only }}
-        shell: bash
-        run: rm -rf -- "$GITHUB_WORKSPACE/sut-red"
-      - name: Restore exact PR native build
-        if: ${{ !inputs.ax_preflight_only }}
-        id: green-cache
-        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
-        with:
-          path: sut-green/apps/macos/.build
-          key: mac-new-thread-package-macos-26-intel-${{ env.TARGET_SHA }}-${{ hashFiles('sut-green/apps/macos/Package.resolved') }}
-      - name: Build PR Mac app and Gateway
-        if: ${{ !inputs.ax_preflight_only }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          cd sut-green
-          BUILD_ARCHS="$(uname -m)" BUILD_CONFIG=debug ALLOW_ADHOC_SIGNING=1 OPENCLAW_SKIP_MLX_TTS=1 \
-            /bin/bash scripts/package-mac-app.sh > "$GITHUB_WORKSPACE/green-package.log" 2>&1
-      - name: Save exact PR native build
-        if: ${{ !inputs.ax_preflight_only && steps.green-cache.outputs.cache-hit != 'true' }}
-        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
-        with:
-          path: sut-green/apps/macos/.build
-          key: mac-new-thread-package-macos-26-intel-${{ env.TARGET_SHA }}-${{ hashFiles('sut-green/apps/macos/Package.resolved') }}
-      - name: Run guarded real-app green control
-        if: ${{ !inputs.ax_preflight_only }}
-        timeout-minutes: 10
-        shell: bash
-        run: |
-          set -euo pipefail
-          /usr/bin/perl -e 'alarm 600; exec @ARGV' node proof-runner/proof/new-thread.mjs \
-            --source "$GITHUB_WORKSPACE/sut-green" --app "$GITHUB_WORKSPACE/sut-green/dist/OpenClaw.app" \
-            --sha "$TARGET_SHA" --mode green --out "$GITHUB_WORKSPACE/new-thread-green"
-      - name: Require exact-head red and green verdicts
-        if: ${{ !inputs.ax_preflight_only }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          node --input-type=module - <<'NODE'
-          import fs from 'node:fs';
-          import { verifyEvidenceDirectory } from './proof-runner/proof/evidence.mjs';
-          for (const [arm, status, sha] of [
-            ['red', 'expected-red', process.env.BASE_SHA],
-            ['green', 'green', process.env.TARGET_SHA],
-          ]) {
-            const r = await verifyEvidenceDirectory('new-thread-' + arm + '/evidence', arm);
-            if (r.mode !== arm || r.attempt !== '1' || process.env.GITHUB_RUN_ATTEMPT !== '1' || r.workflowSha !== process.env.GITHUB_SHA || r.status !== status || r.sourceSha !== sha || r.providerPosts !== 0 ||
-                r.cleanup !== 'owned-process-groups-retired' ||
-                r.nativeUIProof !== true ||
-                (arm === 'red' && r.redBoundary?.kind !== 'native-recursion-before-rpc') ||
-                (arm === 'green' && (r.session?.oracle !== 'native-copy-session-key' || r.session?.key !== r.key || !r.session?.sessionId))) {
-              throw new Error(arm + ' verdict did not meet required proof contract');
-            }
-          }
-          NODE
-      - name: Redact package log paths
-        if: always()
-        shell: bash
-        run: |
-          set -euo pipefail
-          for log in red-package.log green-package.log new-thread-runner/evidence/*.log; do
-            if [[ -f "$log" ]]; then
-              sed -i '' -e "s|$GITHUB_WORKSPACE|[WORKSPACE]|g" -e "s|$HOME|[HOME]|g" "$log"
-            fi
-          done
-      - name: Upload sanitized evidence
-        if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: mac-new-thread-real-app-${{ github.run_id }}-${{ github.run_attempt }}
-          path: |
-            new-thread-runner/evidence/
-            new-thread-red/evidence/
-            new-thread-green/evidence/
-            red-package.log
-            green-package.log
-          if-no-files-found: error
