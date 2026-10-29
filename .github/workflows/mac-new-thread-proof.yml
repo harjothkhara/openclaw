@@ -1,0 +1,31 @@
+name: Mac New Thread real-app proof
+
+# This fork-only default-branch stub registers manual dispatch. The proof branch
+# supplies the actual workflow at the same path; dispatching main fails closed.
+on:
+  workflow_dispatch:
+    inputs:
+      target_sha:
+        description: Exact upstream PR head SHA
+        required: true
+        type: string
+      serial_confirmed:
+        description: Coordinator confirmed no other active Mac proof run
+        required: true
+        default: false
+        type: boolean
+      ax_preflight_only:
+        description: Startup/AX diagnostics only
+        required: true
+        default: true
+        type: boolean
+
+permissions: {}
+jobs:
+  registration-only:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Refuse default-branch proof
+        run: |
+          echo '::error::Dispatch this workflow on proof/mac-new-thread-186215-2026-10-27.'
+          exit 1
