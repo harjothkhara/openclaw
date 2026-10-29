@@ -124,6 +124,14 @@ connection subscribe/history, fresh active-key copies before/after action and
 at least10s later, a genuinely new durable ID, cheap final AX ping, live app and
 Gateway/connection, no guard/inference, then verified cleanup. No action retry.
 
+Hosted run 40951702213 built the base app and Gateway and captured one owned,
+frontmost, rendered window, but the first product AXRole read returned macOS AX
+error -25204 before any action. The exact helper passed its separate AppKit
+fixture check. During the 90s startup admission window, the driver now retries
+only this exact read-only app-root error after reconfirming the owned window;
+other AX errors still stop immediately. An exhausted window remains incomplete.
+This is setup tolerance, not a red or green behavior oracle.
+
 Optional ax_preflight_only:true is startup/Thread-target diagnostics only. It
 never opens/presses a menu or copies the clipboard, forbids creation/inference,
 skips green packaging and ends preflight-ready/nativeUIProof=false, not product
@@ -150,6 +158,7 @@ Shared diagnostic40648820698 passed, but is not OpenClaw/New Thread proof and
 cannot transfer executable-specific permissions to another VM/binary.
 
 Local qualification: Node contracts, syntax, YAML/bash/gate checks and fresh
-source review. Native Swift compilation/AX shape/menu/clipboard/latency and app
-behavior remain UNVERIFIED until the coordinated hosted run. No real-app green,
-review rating or ready-for-maintainer-look claim is made by this branch.
+source review. Native Swift compilation and the separate AppKit fixture passed in
+run 40951702213; product AX/menu/clipboard/action behavior remains UNVERIFIED.
+No real-app red or green, review rating, or ready-for-maintainer-look claim is
+made by this branch.

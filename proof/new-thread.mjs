@@ -404,6 +404,29 @@ async function main() {
     }, killAfter);
     try {
       const result = await bounded("AX process settlement", p.done, settleAfter);
+      if (action === "probe" && !timedOut && result.code === 1) {
+        const lines = p.stderr.trim().split("\n");
+        let rootRead;
+        let failure;
+        if (lines.length === 2) {
+          try {
+            rootRead = JSON.parse(lines[0]);
+            failure = JSON.parse(lines[1]);
+          } catch {
+            // Unrecognized diagnostics retain the original failure below.
+          }
+        }
+        if (
+          rootRead?.pid === appProc.child.pid &&
+          rootRead.stage === "read:AXRole" &&
+          rootRead.visited === 0 &&
+          failure?.kind === "targeted-native-ax-error" &&
+          failure.domain === "TargetedMenu.read:AXRole" &&
+          failure.code === -25204
+        ) {
+          throw Object.assign(new Error("App AX root is not ready"), { code: "AX_ROOT_NOT_READY" });
+        }
+      }
       assert.ok(
         !timedOut && result.code === 0,
         "ax-" + action + " failed/timed out; inspect ax-last.json",
@@ -921,7 +944,15 @@ async function main() {
           "Owned frontmost window changed before AX traversal",
         );
         report.window = confirmed;
-        const a = await ax("probe"); // Missing/ambiguous/slow targeted route is incomplete, never a guessed fallback.
+        let a;
+        try {
+          a = await ax("probe"); // No action until the owned app answers the targeted AX query.
+        } catch (error) {
+          if (error?.code !== "AX_ROOT_NOT_READY") throw error;
+          report.axRootNotReadyCount = (report.axRootNotReadyCount ?? 0) + 1;
+          await sleep(500);
+          continue;
+        }
         if (a.complete) {
           beforeAX = a;
           break;
