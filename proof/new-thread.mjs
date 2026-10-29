@@ -928,6 +928,19 @@ async function main() {
         continue;
       }
       if (status.primary.connection.state === "connected") {
+        const liveNative = [...connections.keys()].filter((conn) => {
+          const state = connectionState(conn);
+          return state.client === "openclaw-macos" && state.role === "operator" &&
+            state.admitted && !state.closed;
+        });
+        const historyReady = liveNative.length === 1 && records.some((row) =>
+          row.conn === liveNative[0] && row.method === "chat.history" &&
+          row.side === "res" && row.ok === true);
+        if (!historyReady) {
+          await sleep(500);
+          continue;
+        }
+        report.initialHistoryReady = true;
         // Window Server/AppKit state is independent of the slow System Events AX traversal.
         const window = await ownedWindow("activate");
         if (!window.ready) {
@@ -960,6 +973,7 @@ async function main() {
       }
       await sleep(500);
     }
+    assert.ok(report.initialHistoryReady, "Initial native chat.history response missing");
     assert.ok(report.window?.ready, "No owned frontmost onscreen window; GUI setup incomplete");
     assert.ok(beforeAX, "Authenticated app/native AX readiness missing");
     assert.ok(

@@ -132,6 +132,14 @@ only this exact read-only app-root error after reconfirming the owned window;
 other AX errors still stop immediately. An exhausted window remains incomplete.
 This is setup tolerance, not a red or green behavior oracle.
 
+Hosted run 40965501000 recovered four exact app-root reads, then failed at
+AXChildren values while the captured native window still showed Loading chat.
+The native chat.history request had not received its Gateway response when AX
+traversal began. The driver now waits for that successful response on the one
+live admitted native connection before window capture and targeted AX. Missing
+history remains incomplete after the existing 90s admission window; later-node
+AX errors still fail immediately. No action is retried.
+
 Optional ax_preflight_only:true is startup/Thread-target diagnostics only. It
 never opens/presses a menu or copies the clipboard, forbids creation/inference,
 skips green packaging and ends preflight-ready/nativeUIProof=false, not product
@@ -160,5 +168,7 @@ cannot transfer executable-specific permissions to another VM/binary.
 Local qualification: Node contracts, syntax, YAML/bash/gate checks and fresh
 source review. Native Swift compilation and the separate AppKit fixture passed in
 run 40951702213; product AX/menu/clipboard/action behavior remains UNVERIFIED.
+Run 40965501000 also stopped before any New Thread action; its hosted fixture
+and owned-window controls passed, but it is not base-red or PR-green proof.
 No real-app red or green, review rating, or ready-for-maintainer-look claim is
 made by this branch.
