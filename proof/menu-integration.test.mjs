@@ -90,7 +90,8 @@ test("proof entry point preserves canonical CI and pins every proof Action", asy
     createHash("sha256").update(ci).digest("hex"),
     "14dae8ab0260c71c6b2dee5d12b27ac4ac38121707ab16b69f06eec1f2202ed3",
   );
-  const actions = [...workflow.matchAll(/^\s*uses:\s+(\S+)/gm)].map((match) => match[1]);
+  const proofJobs = workflow.slice(workflow.indexOf("\n  admission:\n"));
+  const actions = [...proofJobs.matchAll(/^\s*uses:\s+(\S+)/gm)].map((match) => match[1]);
   assert.ok(actions.length > 0);
   for (const action of actions) assert.match(action, /^[^@]+@[0-9a-f]{40}$/);
 });

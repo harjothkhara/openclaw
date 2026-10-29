@@ -6,7 +6,7 @@ df5ee52eed00039e31417af17c2ed3b745d6cf056d29bacd152dab232e478bf0  ./ax-budget.mj
 1721b16ea4f70337ae3bb71a2c16de6833cbf5c9aea788b6a54398c435ea4dc5  ./ax-budget.test.mjs
 304d61cc7593d30ebf2783ffaf81b2463e768dbee2d4ec805e56cbcb29c7549a  ./evidence.mjs
 38773e6eb126a6faa27798c6f5a88929f801e3038ea19dceac8827369825378d  ./evidence.test.mjs
-c39595209d8df4de61d826faaeabb0aea53e859b6ff396228e12a4badb6c13cd  ./menu-integration.test.mjs
+69a2d1075785f045dbf4e260bb1204f7c08491f9e2b63fb4f2d3be5385b3e655  ./menu-integration.test.mjs
 068760c364e61beb36cb02341a42f51f7829085dc1e7f953af333a2265c2713f  ./new-thread-window.swift
 5cb9aa9cf340b2f071aaa58b2b2663e1b5f9acbe5ead0c69ccd36eea4200ac2c  ./new-thread.mjs
 c36ad87301408a6cfb06ea0278a1cfd032fb4e39860b03575d4c87eb0ec4f666  ./new-thread.test.mjs
