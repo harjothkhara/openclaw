@@ -89,7 +89,22 @@ final class TargetedMenuProbe {
         try self.checkBudget(node)
         self.mark("children-values")
         var values: CFArray?
-        let read = AXUIElementCopyAttributeValues(node, kAXChildrenAttribute as CFString, 0, count, &values)
+        var read = AXUIElementCopyAttributeValues(node, kAXChildrenAttribute as CFString, 0, count, &values)
+        if read == .cannotComplete {
+            try self.checkBudget(node)
+            self.mark("children-recount")
+            var revised: CFIndex = 0
+            let recount = AXUIElementGetAttributeValueCount(node, kAXChildrenAttribute as CFString, &revised)
+            if recount == .success, revised != count {
+                guard revised >= 0, revised <= 64 else { throw self.fail("children-budget") }
+                if revised == 0 { return [] }
+                count = revised
+                values = nil
+                try self.checkBudget(node)
+                self.mark("children-values-after-count-change")
+                read = AXUIElementCopyAttributeValues(node, kAXChildrenAttribute as CFString, 0, count, &values)
+            }
+        }
         guard read == .success, let elements = values as? [AXUIElement], elements.count == count
         else { throw self.fail("children-values", Int(read.rawValue)) }
         return elements

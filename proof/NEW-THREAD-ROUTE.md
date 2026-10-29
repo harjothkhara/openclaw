@@ -138,7 +138,12 @@ The native chat.history request had not received its Gateway response when AX
 traversal began. The driver now waits for that successful response on the one
 live admitted native connection before window capture and targeted AX. Missing
 history remains incomplete after the existing 90s admission window; later-node
-AX errors still fail immediately. No action is retried.
+AX errors still fail immediately unless a children-values cannotComplete is
+paired with a changed, still-bounded child count. In that case the helper makes
+one more read of that node's children within its existing deadline. An unchanged
+count or second failure stops the probe; no action is retried. The previous run
+does not establish that the child count changed, so this guard may still leave
+the next run setup-incomplete.
 
 Optional ax_preflight_only:true is startup/Thread-target diagnostics only. It
 never opens/presses a menu or copies the clipboard, forbids creation/inference,
