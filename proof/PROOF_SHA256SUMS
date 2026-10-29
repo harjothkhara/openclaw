@@ -8,7 +8,7 @@ df5ee52eed00039e31417af17c2ed3b745d6cf056d29bacd152dab232e478bf0  ./ax-budget.mj
 38773e6eb126a6faa27798c6f5a88929f801e3038ea19dceac8827369825378d  ./evidence.test.mjs
 c39595209d8df4de61d826faaeabb0aea53e859b6ff396228e12a4badb6c13cd  ./menu-integration.test.mjs
 068760c364e61beb36cb02341a42f51f7829085dc1e7f953af333a2265c2713f  ./new-thread-window.swift
-130a92aaf805784a1de9b0347c5904de35f007e945701855bf2ffdbb06662e99  ./new-thread.mjs
+5cb9aa9cf340b2f071aaa58b2b2663e1b5f9acbe5ead0c69ccd36eea4200ac2c  ./new-thread.mjs
 c36ad87301408a6cfb06ea0278a1cfd032fb4e39860b03575d4c87eb0ec4f666  ./new-thread.test.mjs
 8542dd5cbf049e3acbe8ba0b00dfa5614b17288cd2642bc6721378701b1d15b0  ./owned-processes.mjs
 315b46524823da68f428370e3000b668d2db42ea284d2f4bbef6372867fb7cde  ./owned-processes.test.mjs

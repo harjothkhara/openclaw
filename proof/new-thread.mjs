@@ -1003,11 +1003,18 @@ async function main() {
       // A directly written stack file would bypass the process-output limit.
       sample = start(
         "sample",
-        ["/usr/bin/sample", String(appProc.child.pid), "12", "1", "-file", "/dev/stdout"],
+        ["/usr/bin/sample", String(appProc.child.pid), "12", "1", "-mayDie", "-file", "/dev/stdout"],
         baseEnv,
       );
       const sampleDeadline = setTimeout(() => kill(sample), 14000);
       void sample.done.finally(() => clearTimeout(sampleDeadline));
+      // Give sample time to attach before the base can hit its memory guard.
+      // An early sampler failure must stop the action instead of yielding a vacuous red result.
+      await sleep(500);
+      assert.ok(
+        !sample.closed && !fatal && !guard && !appProc.closed,
+        "Stack sampler did not remain active before native action",
+      );
     }
     const click = await ax("new");
     assert.equal(click.clicked, true);
