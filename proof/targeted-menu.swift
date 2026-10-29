@@ -11,16 +11,18 @@ final class TargetedMenuProbe {
     let executable: URL
     let app: AXUIElement
     let started = DispatchTime.now().uptimeNanoseconds
+    let operationBudgetMs: Double
     let budgetNs: UInt64
     let fixture: Bool
     var visited = 0
     var stage = "start"
 
-    init(pid: Int32, executable: URL, ping: Bool, fixture: Bool) throws {
+    init(pid: Int32, executable: URL, operationBudgetMs: Double, fixture: Bool) throws {
         self.pid = pid
         self.executable = executable.resolvingSymlinksInPath()
         self.app = AXUIElementCreateApplication(pid)
-        self.budgetNs = ping ? 1_000_000_000 : 3_000_000_000
+        self.operationBudgetMs = operationBudgetMs
+        self.budgetNs = UInt64(operationBudgetMs * 1_000_000)
         self.fixture = fixture
         try self.requireOwner()
         guard AXIsProcessTrusted() else { throw NSError(domain: "AXTrustMissing", code: 1) }
@@ -41,6 +43,12 @@ final class TargetedMenuProbe {
     }
     var elapsedMs: Double {
         Double(DispatchTime.now().uptimeNanoseconds - self.started) / 1_000_000
+    }
+    // Pure final snapshot: an AX call can return after its pre-call budget check.
+    func finalElapsedMs() throws -> Double {
+        let elapsed = DispatchTime.now().uptimeNanoseconds - self.started
+        guard elapsed <= self.budgetNs else { throw self.fail("deadline") }
+        return Double(elapsed) / 1_000_000
     }
     func checkBudget(_ node: AXUIElement) throws {
         let elapsed = DispatchTime.now().uptimeNanoseconds - self.started
@@ -193,9 +201,12 @@ final class TargetedMenuProbe {
                 guard try self.role(window) == kAXWindowRole else { throw self.fail("fixture-window-role") }
             }
             try self.requireOwner()
+            let axTrusted = AXIsProcessTrusted()
+            let elapsedMs = try self.finalElapsedMs()
             return ["schema": 1, "kind": "targeted-native-ax-fixture", "action": action,
-                "pid": self.pid, "complete": true, "axTrusted": AXIsProcessTrusted(),
-                "windowCount": windows.count, "elapsedMs": self.elapsedMs, "newThreadPresses": 0]
+                "pid": self.pid, "complete": true, "axTrusted": axTrusted,
+                "operationBudgetMs": self.operationBudgetMs,
+                "windowCount": windows.count, "elapsedMs": elapsedMs, "newThreadPresses": 0]
         }
         let window = try self.focusedWindow()
         var out: [String: Any] = ["schema": 1, "kind": "targeted-native-ax", "action": action,
@@ -247,11 +258,12 @@ final class TargetedMenuProbe {
                 }
             }
         }
-        out["elapsedMs"] = self.elapsedMs
         out["sampledUptimeMs"] = Double(DispatchTime.now().uptimeNanoseconds) / 1_000_000
         out["visited"] = self.visited
-        out["complete"] = true
         out["menuItemRouteVerified"] = action == "new" || action == "copy-key"
+        out["operationBudgetMs"] = self.operationBudgetMs
+        out["elapsedMs"] = try self.finalElapsedMs()
+        out["complete"] = true
         return out
     }
 }
@@ -273,11 +285,13 @@ enum TargetedMenuMain {
     @MainActor
     static func run() throws {
         let args = CommandLine.arguments
-        guard args.count == 4, let pid = Int32(args[1]), pid > 1, args[2].hasPrefix("/"),
+        guard args.count == 5, let pid = Int32(args[1]), pid > 1, args[2].hasPrefix("/"),
+              let operationBudgetMs = Double(args[4]), operationBudgetMs.isFinite,
+              operationBudgetMs > 0, operationBudgetMs <= 3000,
               ["fixture", "ping", "probe", "new", "copy-key"].contains(args[3])
         else { throw NSError(domain: "TargetedMenuArguments", code: 1) }
         let probe = try TargetedMenuProbe(pid: pid, executable: URL(fileURLWithPath: args[2]),
-            ping: args[3] == "ping" || args[3] == "fixture", fixture: args[3] == "fixture")
+            operationBudgetMs: operationBudgetMs, fixture: args[3] == "fixture")
         let value = try probe.run(args[3])
         let data = try JSONSerialization.data(withJSONObject: value, options: [.sortedKeys])
         FileHandle.standardOutput.write(data)

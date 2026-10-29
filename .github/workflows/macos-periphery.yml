@@ -157,10 +157,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          node - <<'NODE'
-          const fs = require('node:fs');
+          node --input-type=module - <<'NODE'
+          import fs from 'node:fs';
+          import { verifyEvidenceDirectory } from './proof-runner/proof/evidence.mjs';
           const root = 'new-thread-red/evidence/';
-          const r = JSON.parse(fs.readFileSync(root + 'verdict.json', 'utf8'));
+          const r = await verifyEvidenceDirectory(root, 'preflight');
           const rpc = JSON.parse(fs.readFileSync(root + 'rpc.json', 'utf8'));
           if (r.mode !== 'preflight' || r.status !== 'preflight-ready' || r.nativeUIProof !== false ||
               r.sourceSha !== process.env.BASE_SHA || r.workflowSha !== process.env.GITHUB_SHA ||
@@ -211,13 +212,14 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          node - <<'NODE'
-          const fs = require('node:fs');
+          node --input-type=module - <<'NODE'
+          import fs from 'node:fs';
+          import { verifyEvidenceDirectory } from './proof-runner/proof/evidence.mjs';
           for (const [arm, status, sha] of [
             ['red', 'expected-red', process.env.BASE_SHA],
             ['green', 'green', process.env.TARGET_SHA],
           ]) {
-            const r = JSON.parse(fs.readFileSync('new-thread-' + arm + '/evidence/verdict.json', 'utf8'));
+            const r = await verifyEvidenceDirectory('new-thread-' + arm + '/evidence', arm);
             if (r.mode !== arm || r.workflowSha !== process.env.GITHUB_SHA || r.status !== status || r.sourceSha !== sha || r.providerPosts !== 0 ||
                 r.cleanup !== 'owned-process-groups-retired' ||
                 r.nativeUIProof !== true ||

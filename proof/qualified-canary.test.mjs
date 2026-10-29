@@ -13,6 +13,7 @@ const good = {
   axTrusted: true,
   newThreadPresses: 0,
   windowCount: 1,
+  operationBudgetMs: 1000,
   elapsedMs: 10,
 };
 test("exact helper fixture receipt is distinct from a product/menu verdict", () =>
@@ -24,6 +25,8 @@ for (const patch of [
   { windowCount: 0 },
   { windowCount: 17 },
   { elapsedMs: 1001 },
+  { operationBudgetMs: 3000 },
+  { operationBudgetMs: undefined },
   { newThreadPresses: 1 },
   { kind: "runner-diagnostic-not-product-proof" },
 ])
@@ -55,9 +58,12 @@ for (const mode of ["pass", "helper-timeout", "fixture-exit"])
         root: path.join(work, "owned"),
         out: path.join(work, "out"),
         env: { FAKE_MODE: mode },
-        runHelper: async (file, args) => {
+        runHelper: async (file, args, options) => {
           helperCalled = true;
+          assert.equal(args.length, 4);
           assert.equal(args[2], "fixture");
+          assert.equal(args[3], "1000");
+          assert.equal(options.timeout, 2000);
           assert.equal(file, script);
           if (mode === "helper-timeout")
             throw Object.assign(Error("helper deadline"), {

@@ -38,6 +38,7 @@ const probe = {
   threadMenuCount: 1,
   newThreadPresses: 0,
   menuItemRouteVerified: false,
+  operationBudgetMs: 3000,
   elapsedMs: 20,
 };
 test("read-only targeted probe is explicitly not menu-item/action proof", () =>
@@ -75,6 +76,12 @@ test("serial first-attempt admission precedes Mac allocation and shared canary p
   );
   assert.ok(workflow.includes("13cde4984372bef34402ae61ff7891379626f260"));
   assert.ok(workflow.includes("new-thread-runner/evidence/"));
+  assert.equal(
+    (workflow.match(/await verifyEvidenceDirectory\(/g) ?? []).length,
+    2,
+    "Both preflight and red/green gates must verify actual required artifact hashes",
+  );
+  assert.equal((workflow.match(/node --input-type=module/g) ?? []).length, 2);
 });
 
 test("proof entry point preserves canonical CI and pins every proof Action", async () => {

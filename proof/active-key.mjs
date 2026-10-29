@@ -1,6 +1,7 @@
 // Candidate composition only. The production driver still owns RPC, liveness,
 // inference and cleanup gates; this module never returns a product verdict.
 import assert from "node:assert/strict";
+import { requireAXBudgetReceipt } from "./ax-budget.mjs";
 function common(r, action, pid) {
   assert.equal(r?.schema, 1);
   assert.equal(r.kind, "targeted-native-ax");
@@ -11,11 +12,7 @@ function common(r, action, pid) {
   assert.equal(r.appRole, "AXApplication");
   assert.equal(r.windowRole, "AXWindow");
   assert.ok(Number.isFinite(r.sampledUptimeMs) && r.sampledUptimeMs >= 0);
-  assert.ok(
-    Number.isFinite(r.elapsedMs) &&
-      r.elapsedMs >= 0 &&
-      r.elapsedMs <= (action === "ping" ? 1000 : 3000),
-  );
+  requireAXBudgetReceipt(r, action);
   if (action !== "ping") {
     assert.equal(r.threadMenuCount, 1);
     assert.equal(r.threadEnabled, true);

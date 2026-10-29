@@ -21,10 +21,31 @@ coordinates, a full SwiftUI tree walk or a renamed sidebar row.
 ## One owner per proof responsibility
 
 - new-thread.mjs owns isolated source/profile/Gateway/app state, wire correlation,
-  memory/watchdog, health/liveness, inference rejection and bounded owned cleanup.
-- targeted-menu.swift owns bounded direct AX observation/action. Each message has
-  <=200ms timeout, ping/fixture1s, other operations3s; parent kills at4s and bounds
-  settlement at6s. Missing, ambiguous, untrusted or slow state stays incomplete.
+  memory/watchdog, health/liveness and inference rejection. It delegates evidence
+  persistence and process-group lifecycle to the two owners below.
+- evidence.mjs owns a flushed atomic incomplete/start receipt before child work,
+  bounded stack/log reads, required-artifact records, final behavior verdict before
+  optional diagnostics, and manifest verification. The stack sampler writes through
+  its bounded stdout pipe, not an uncontrolled external file. Limits are 8 MiB per
+  process/stack/log, 2 MiB per small receipt, and 16 MiB per owned image artifact;
+  these are proof collection caps, not display/upload recommendations. Reads abort
+  after at most 2s. Optional export has a 32 MiB/128-file/5s collection budget;
+  over-budget/overflowed logs are omitted with metadata, not partial secret-bearing
+  prefixes. Required failure makes the outcome incomplete. Optional export cannot
+  erase the retained verdict. Both workflow gates independently verify the mode's
+  required file set, byte counts and hashes using manifest schema2. Filesystem/VM
+  failure can still prevent writes; retained start data never implies success.
+- owned-processes.mjs owns captured PGIDs, live-leader authority immediately before
+  signaling, bounded TERM/KILL/pipe settlement, and observations of every group.
+  Leader exit, pipe closure and group absence are distinct. A surviving PGID after
+  leader exit is unattributed: do not signal it or claim retirement. Cleanup stays
+  failed/incomplete and disposable-runner retirement remains coordinator-owned.
+- ax-budget.mjs owns the declared operation budget: ping/fixture1s and other
+  actions3s. Node passes it to targeted-menu.swift; Swift enforces monotonic work
+  time and checks the final completion snapshot, and Node checks the declaration
+  and elapsed work before accepting a receipt. Parent process kill is work+1s and
+  pipe settlement is kill+2s; startup overhead is not helper work. AX messages keep
+  <=200ms timeouts. Missing, ambiguous, untrusted or slow state stays incomplete.
   probe is read-only and does not qualify menu-item attachment; new/copy-key do.
 - active-key.mjs composes fresh clipboard receipts, canonical response key, full
   durable inventory,10s monotonic endpoint stability and post-stability AX ping.
@@ -77,8 +98,9 @@ remains incomplete, even with partial stack/allocation evidence: this route does
 not yet establish a causally classified crash receipt. It never treats a bare
 crash, timeout or disconnect as red. No create RPCs and unchanged durable
 key-ID inventory corroborate recursion; silence or timeout alone never pass.
-The AX helper retains its independent 4s kill/6s settlement bounds. Memory
-monitoring starts before the press and continues through stability. Only red
+Action helpers retain independent 4s kill/6s settlement bounds (ping/fixture use
+2s/4s). Memory monitoring starts before the press and continues through stability.
+Only red
 arms the 10s action watchdog after acknowledgement; green instead gets its own
 10s correlation budget after the bounded press returns. A slow valid press must
 not consume that correlation budget.
@@ -96,7 +118,8 @@ canary; this input is an explicit diagnostic fallback.
 ## Evidence and limits
 
 Artifact mac-new-thread-real-app-<run>-<attempt> contains the shared runner and
-exact-helper receipts, compile logs, per-arm verdict/source/runtime hashes,
+exact-helper receipts, compile logs, per-arm retained verdict/source/runtime hashes,
+required-file manifest schema2 and optional export omission/error metadata,
 Gateway/config/stdout/stderr diagnostics, bounded AX stages/last command, wire
 records, memory/stack, durable inventories and owned-window captures as reached.
 Missing or failed setup remains incomplete; a successful workflow is insufficient

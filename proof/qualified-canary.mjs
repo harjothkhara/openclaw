@@ -6,6 +6,7 @@ import * as fs from "node:fs/promises";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { pathToFileURL } from "node:url";
+import { operationBudgetMs, requireAXBudgetReceipt } from "./ax-budget.mjs";
 export const sharedSha = "13cde4984372bef34402ae61ff7891379626f260";
 export function requireFixtureReceipt(r, pid) {
   assert.equal(r?.schema, 1);
@@ -16,7 +17,7 @@ export function requireFixtureReceipt(r, pid) {
   assert.equal(r.axTrusted, true);
   assert.equal(r.newThreadPresses, 0);
   assert.ok(Number.isInteger(r.windowCount) && r.windowCount > 0 && r.windowCount <= 16);
-  assert.ok(Number.isFinite(r.elapsedMs) && r.elapsedMs >= 0 && r.elapsedMs <= 1000);
+  requireAXBudgetReceipt(r, "fixture");
 }
 export async function qualify({ fixture, helper, root, out, env, runHelper }) {
   await fs.mkdir(root, { recursive: false });
@@ -84,10 +85,15 @@ export async function qualify({ fixture, helper, root, out, env, runHelper }) {
     }
     assert.ok(owner, "Fixture acknowledgment deadline exceeded");
     const executable = await fs.realpath(fixture[0]);
-    const result = await runHelper(helper, [String(child.pid), executable, "fixture"], {
-      env,
-      timeout: 4000,
-    });
+    const budget = operationBudgetMs("fixture");
+    const result = await runHelper(
+      helper,
+      [String(child.pid), executable, "fixture", String(budget)],
+      {
+        env,
+        timeout: budget + 1000,
+      },
+    );
     assert.ok(Buffer.byteLength(result.stdout) <= 16384);
     receipt.helper = JSON.parse(result.stdout);
     requireFixtureReceipt(receipt.helper, child.pid);

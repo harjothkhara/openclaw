@@ -11,6 +11,9 @@ import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { requireActiveKey, requireCopyReceipt } from "./active-key.mjs";
+import { operationBudgetMs, requireAXBudgetReceipt } from "./ax-budget.mjs";
+import { createEvidenceWriter, PROCESS_OUTPUT_LIMIT } from "./evidence.mjs";
+import { signalOwnedGroup, retireOwnedProcesses } from "./owned-processes.mjs";
 
 export function observedResponse(request, frame) {
   return {
@@ -166,9 +169,7 @@ export function requirePreflightSnapshot(snapshot, records) {
   assert.equal(snapshot.newThreadPresses, 0);
   assert.equal(snapshot.menuItemRouteVerified, false);
   assert.equal(snapshot.clicked, undefined);
-  assert.ok(
-    Number.isFinite(snapshot.elapsedMs) && snapshot.elapsedMs >= 0 && snapshot.elapsedMs <= 3000,
-  );
+  requireAXBudgetReceipt(snapshot, "probe");
   assert.equal(
     records.filter(
       (r) => r.side === "req" && ["sessions.create", "chat.send", "agent"].includes(r.method),
@@ -191,8 +192,8 @@ async function main() {
       process.argv[3 + i * 2],
     ]),
   );
-  const source = await fs.realpath(args["--source"]),
-    app = await fs.realpath(args["--app"]);
+  let source = path.resolve(args["--source"]),
+    app = path.resolve(args["--app"]);
   const sha = args["--sha"],
     mode = args["--mode"],
     out = path.resolve(args["--out"]);
@@ -200,10 +201,7 @@ async function main() {
   assert.ok(["red", "green", "preflight"].includes(mode));
   if (mode !== "green") assert.equal(sha, "1b50ce5a6835798634c4d98ac87891f4e5290120");
   const workspace = await fs.realpath(process.env.GITHUB_WORKSPACE);
-  assert.ok(
-    out.startsWith(workspace + path.sep) && !out.startsWith(source + path.sep),
-    "Output must be a fresh sibling of the clean SUT checkout",
-  );
+  assert.ok(out.startsWith(workspace + path.sep), "Output must be an owned workspace directory");
   await fs.mkdir(out, { mode: 0o700 }); // Refuse reuse, including a prior incomplete run.
   const priv = path.join(out, "private"),
     evidence = path.join(out, "evidence");
@@ -264,24 +262,17 @@ async function main() {
     [token, providerKey, source, app, priv, baseEnv.HOME]
       .filter(Boolean)
       .reduce((s, secret) => s.split(secret).join("[REDACTED]"), String(text));
-  const save = (name, value) =>
-    fs.writeFile(
-      path.join(evidence, name),
-      redact(typeof value === "string" ? value : JSON.stringify(value, null, 2) + "\n"),
-    );
-  const saveGatewayDiagnostics = async (checkpoint) => {
-    await save("gateway-startup.json", {
-      checkpoint,
-      started: Boolean(gateway?.child.pid),
-      pid: gateway?.child.pid ?? null,
-      streamsClosed: gateway?.closed ?? false,
-      exit: report.gatewayExit ?? null,
-      stdoutBytes: Buffer.byteLength(gateway?.stdout ?? ""),
-      stderrBytes: Buffer.byteLength(gateway?.stderr ?? ""),
-    });
-    await save("gateway-stdout.log", gateway?.stdout ?? "");
-    await save("gateway-stderr.log", gateway?.stderr ?? "");
-  };
+  const evidenceWriter = createEvidenceWriter(evidence, { redact });
+  const save = evidenceWriter.write;
+  const gatewayDiagnostics = () => ({
+    checkpoint: "after-cleanup",
+    started: Boolean(gateway?.child.pid),
+    pid: gateway?.child.pid ?? null,
+    streamsClosed: gateway?.closed ?? false,
+    exit: report.gatewayExit ?? null,
+    stdoutBytes: Buffer.byteLength(gateway?.stdout ?? ""),
+    stderrBytes: Buffer.byteLength(gateway?.stderr ?? ""),
+  });
   const report = {
     schema: 1,
     mode,
@@ -295,23 +286,39 @@ async function main() {
     status: "incomplete",
     cleanup: "pending",
     imagesRequireHumanInspection: true,
+    phase: "start",
   };
+  // Refuse all child work unless the flushed, atomically retained start result exists.
+  await save("verdict.json", { ...report, nativeUIProof: false, providerPosts: 0 });
   const hash = async (p) => {
     const h = createHash("sha256");
     for await (const b of createReadStream(p)) h.update(b);
     return h.digest("hex");
   };
-  function start(label, argv, env, capture = false) {
+  function start(label, argv, env, capture = false, outputLimit = PROCESS_OUTPUT_LIMIT) {
     const child = spawn(argv[0], argv.slice(1), {
       cwd: source,
       env,
       detached: true,
       stdio: ["ignore", "pipe", "pipe"],
     });
-    const log = createWriteStream(path.join(priv, ++serial + "-" + label + ".log"), {
-      mode: 0o600,
+    const logPath = path.join(priv, ++serial + "-" + label + ".log");
+    const log = createWriteStream(logPath, { mode: 0o600 });
+    const item = {
+      label,
+      child,
+      pgid: child.pid,
+      leaderExited: false,
+      logPath,
+      overflow: false,
+      stdout: "",
+      stderr: "",
+      bytes: 0,
+      closed: false,
+    };
+    child.once("exit", () => {
+      item.leaderExited = true;
     });
-    const item = { label, child, stdout: "", stderr: "", bytes: 0, closed: false };
     item.done = new Promise((resolve) => {
       child.on("error", (error) => {
         fatal = error;
@@ -329,8 +336,10 @@ async function main() {
     });
     for (const key of ["stdout", "stderr"])
       child[key].on("data", (b) => {
+        if (item.overflow) return;
         item.bytes += b.length;
-        if (item.bytes > 32 * 1024 * 1024) {
+        if (item.bytes > outputLimit) {
+          item.overflow = true;
           fatal = Error("Owned process output budget exceeded");
           kill(item);
           return;
@@ -343,28 +352,38 @@ async function main() {
     return item;
   }
   function kill(item, signal = "SIGKILL") {
-    if (item?.closed) return; // Never signal a retired PID; uncertain surviving groups fail cleanup.
-    if (item?.child.pid)
-      try {
-        process.kill(-item.child.pid, signal);
-      } catch (e) {
-        if (e.code !== "ESRCH") throw e;
-      }
+    if (!item) return;
+    try {
+      signalOwnedGroup(item, signal);
+    } catch (error) {
+      fatal = error;
+    }
   }
   async function run(label, argv, env = baseEnv, timeout = 15000) {
     const p = start(label, argv, env, true);
-    const timer = setTimeout(() => kill(p), timeout);
-    const result = await p.done;
-    clearTimeout(timer);
-    assert.equal(result.code, 0, label + " failed/timed out; inspect sanitized log");
-    return p.stdout.trim();
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      kill(p);
+    }, timeout);
+    try {
+      const result = await bounded(label + " process settlement", p.done, timeout + 2000);
+      assert.ok(!timedOut && result.code === 0, label + " failed/timed out; inspect sanitized log");
+      return p.stdout.trim();
+    } finally {
+      clearTimeout(timer);
+    }
   }
   async function ax(action) {
+    const budget = operationBudgetMs(action);
+    const killAfter = budget + 1000,
+      settleAfter = killAfter + 2000;
     const argv = [
       axHelper,
       String(appProc.child.pid),
       path.join(app, "Contents/MacOS/OpenClaw"),
       action,
+      String(budget),
     ];
     // Only the task-owned observer receives hosted-effect context, not the SUT.
     const env = {
@@ -373,30 +392,35 @@ async function main() {
       GITHUB_REPOSITORY: "harjothkhara/openclaw",
       RUNNER_ENVIRONMENT: "github-hosted",
     };
-    const p = start("ax-" + action, argv, env, true);
+    // Keep the JSON receipt small without starving bounded per-stage stderr diagnostics.
+    const p = start("ax-" + action, argv, env, true, 256 * 1024);
     let timedOut = false,
       value = null;
     const startedAt = Date.now();
     const timer = setTimeout(() => {
       timedOut = true;
       kill(p);
-    }, 4000);
+    }, killAfter);
     try {
-      const result = await bounded("AX process settlement", p.done, 6000);
+      const result = await bounded("AX process settlement", p.done, settleAfter);
       assert.ok(
         !timedOut && result.code === 0,
         "ax-" + action + " failed/timed out; inspect ax-last.json",
       );
+      assert.ok(Buffer.byteLength(p.stdout) <= 16384, "AX JSON receipt budget exceeded");
       value = JSON.parse(p.stdout.trim());
       assert.equal(value.pid, appProc.child.pid);
       assert.equal(value.complete, true);
+      requireAXBudgetReceipt(value, action);
       if (action === "probe") requirePreflightSnapshot(value, records);
       return value;
     } finally {
       clearTimeout(timer);
       await save("ax-last.json", {
         action,
-        timeoutMs: 4000,
+        operationBudgetMs: budget,
+        timeoutMs: killAfter,
+        settlementTimeoutMs: settleAfter,
         timedOut,
         startedAt,
         elapsedMs: Date.now() - startedAt,
@@ -443,7 +467,7 @@ async function main() {
       String(windowID),
       path.join(evidence, name),
     ]);
-    const b = await fs.readFile(path.join(evidence, name));
+    const b = await evidenceWriter.registerFile(name);
     assert.equal(b.subarray(1, 4).toString(), "PNG");
     assert.ok(b.readUInt32BE(16) >= 640 && b.readUInt32BE(20) >= 400, "Invalid capture dimensions");
   }
@@ -498,6 +522,13 @@ async function main() {
   }
   let gwEnv, appEnv, windowHelper, axHelper;
   try {
+    report.phase = "setup";
+    source = await fs.realpath(source);
+    app = await fs.realpath(app);
+    assert.ok(
+      !out.startsWith(source + path.sep),
+      "Output must be a fresh sibling of the clean SUT checkout",
+    );
     assert.ok(source.startsWith(workspace + path.sep), "SUT must be an owned workspace checkout");
     assert.ok(
       app.startsWith(path.join(source, "dist") + path.sep),
@@ -545,6 +576,9 @@ async function main() {
     assert.match(process.env.OPENCLAW_NEW_THREAD_AX_HELPER_SHA256 || "", /^[a-f0-9]{64}$/);
     assert.equal(report.axHelperExecutableSha256, process.env.OPENCLAW_NEW_THREAD_AX_HELPER_SHA256);
     report.activeKeyOracleSha256 = await hash(new URL("./active-key.mjs", import.meta.url));
+    report.proofOwnerSha256 = {};
+    for (const name of ["ax-budget.mjs", "evidence.mjs", "owned-processes.mjs"])
+      report.proofOwnerSha256[name] = await hash(new URL("./" + name, import.meta.url));
     report.xcode = await run("xcode", ["/usr/bin/xcodebuild", "-version"]);
     report.binaryArchitectures = await run("arch", ["/usr/bin/lipo", "-archs", exe]);
     assert.ok(
@@ -953,34 +987,33 @@ async function main() {
     await sleep(1000);
     appBaseline = await ps();
     report.baseline = appBaseline;
+    report.phase = "native-action";
     const clickedAt = Date.now();
     report.clickedAt = clickedAt;
     monitoring = true;
     monitorTask = monitor();
     await monitorTask;
-    report.sampleStartedAt = Date.now();
-    // Cover the entire bounded AX traversal and action window, not only pre-click idle time.
-    sample = start(
-      "sample",
-      [
-        "/usr/bin/sample",
-        String(appProc.child.pid),
-        "12",
-        "1",
-        "-file",
-        path.join(priv, "stack.txt"),
-      ],
-      baseEnv,
-    );
-    const sampleDeadline = setTimeout(() => kill(sample), 14000);
-    void sample.done.finally(() => clearTimeout(sampleDeadline));
+    if (mode === "red") {
+      report.sampleStartedAt = Date.now();
+      // Pipe sample output through the same bounded producer as every other child.
+      // A directly written stack file would bypass the process-output limit.
+      sample = start(
+        "sample",
+        ["/usr/bin/sample", String(appProc.child.pid), "12", "1", "-file", "/dev/stdout"],
+        baseEnv,
+      );
+      const sampleDeadline = setTimeout(() => kill(sample), 14000);
+      void sample.done.finally(() => clearTimeout(sampleDeadline));
+    }
     const click = await ax("new");
     assert.equal(click.clicked, true);
     await save("click.json", click);
-    assert.ok(
-      click.pressedAt >= report.sampleStartedAt && click.pressedAt - report.sampleStartedAt < 12000,
-      "Stack sampler did not cover the acknowledged AXPress",
-    );
+    if (mode === "red")
+      assert.ok(
+        click.pressedAt >= report.sampleStartedAt &&
+          click.pressedAt - report.sampleStartedAt < 12000,
+        "Stack sampler did not cover the acknowledged AXPress",
+      );
     if (mode === "red") {
       // AX owns its bounded press; only red needs a post-acknowledgement stop.
       // Green owns a separate correlation budget below, while memory stays guarded.
@@ -988,11 +1021,14 @@ async function main() {
       while (!guard && !fatal && !appProc.closed) await sleep(50);
       assert.ok(guard && !fatal, "Base did not reach a recognized watchdog stop");
       await sample.done;
-      sampleText = await fs.readFile(path.join(priv, "stack.txt"), "utf8");
+      sampleText = await evidenceWriter.readText(sample.logPath);
+      await save("stack.txt", sampleText);
       report.redStackCounts = [
         "OpenClawChatGatewayTransport.createSession",
         "OpenClawChatTransport.createSession",
       ].map((symbol) => sampleText.split(symbol).length - 1);
+      const after = await inventory();
+      await save("sessions-after.json", after);
       report.redBoundary = requireRecursiveRed({
         click,
         guard,
@@ -1001,7 +1037,7 @@ async function main() {
         baseline: appBaseline,
         rows: records,
         before,
-        after: await inventory(),
+        after,
       });
       report.status = "expected-red";
       report.guard = guard;
@@ -1023,6 +1059,7 @@ async function main() {
       );
       requireLiveConnection(connectionState(proofConn));
       report.correlatedAt = Date.now(); // Memory protection continues through stability.
+      report.phase = "stability";
       const selected = await ax("copy-key");
       requireCopyReceipt(selected, appProc.child.pid);
       assert.equal(selected.key, key, "Native active key differs from canonical create response");
@@ -1071,7 +1108,7 @@ async function main() {
     assert.equal(providerPosts, 0, "Provider inference occurred");
   } catch (error) {
     report.status = "incomplete";
-    report.failure = error.stack || String(error);
+    report.failure = String(error.stack || error).slice(0, 4000);
   } finally {
     monitoring = false;
     shuttingDown = true;
@@ -1079,23 +1116,12 @@ async function main() {
     actionDeadlineAt = null;
     const cleanupErrors = [];
     try {
-      await saveGatewayDiagnostics("before-cleanup");
-    } catch (error) {
-      cleanupErrors.push("Gateway diagnostic export failed: " + String(error));
-    }
-    try {
       if (monitorTask) await bounded("watchdog settlement", monitorTask, 1500);
     } catch (e) {
       cleanupErrors.push(String(e));
     }
-    for (const p of processes) kill(p, "SIGTERM");
-    await sleep(500);
-    for (const p of processes) kill(p);
-    try {
-      await bounded("owned process pipes", Promise.all(processes.map((p) => p.done)), 5000);
-    } catch (e) {
-      cleanupErrors.push(String(e));
-    }
+    const processCleanup = await retireOwnedProcesses(processes);
+    cleanupErrors.push(...processCleanup.errors);
     if (relay) {
       for (const c of relay.clients) c.terminate();
       try {
@@ -1112,26 +1138,14 @@ async function main() {
         cleanupErrors.push(String(e));
       }
     }
-    const survivors = processes.filter((p) => {
-      if (!p.child.pid || (p.closed && !["app", "gateway"].includes(p.label))) return false;
-      try {
-        process.kill(-p.child.pid, 0);
-        return true;
-      } catch (e) {
-        if (e.code !== "ESRCH") throw e;
-        return false;
-      }
-    });
-    try {
-      await saveGatewayDiagnostics("after-cleanup");
-    } catch (error) {
-      cleanupErrors.push("Gateway diagnostic export failed: " + String(error));
-    }
+    report.cleanupGroups = processCleanup.groups;
     report.cleanupErrors = cleanupErrors;
     report.cleanup =
-      survivors.length || cleanupErrors.length ? "failed" : "owned-process-groups-retired";
+      processCleanup.status !== "owned-process-groups-retired" || cleanupErrors.length
+        ? "failed"
+        : "owned-process-groups-retired";
     if (
-      survivors.length ||
+      processCleanup.status !== "owned-process-groups-retired" ||
       cleanupErrors.length ||
       fatal ||
       providerPosts ||
@@ -1142,20 +1156,24 @@ async function main() {
       mode !== "preflight" && ["expected-red", "green"].includes(report.status);
     report.guard = guard;
     report.providerPosts = providerPosts;
-    await save("rpc.json", records);
-    await save("memory.json", metrics);
-    await save("commands.json", commands);
-    for (const name of await fs.readdir(priv))
-      if (name.endsWith(".log") || name === "stack.txt")
-        await save(name, await fs.readFile(path.join(priv, name), "utf8"));
-    await save("verdict.json", report);
-    const manifest = {};
-    for (const name of await fs.readdir(evidence))
-      manifest[name] = await hash(path.join(evidence, name));
-    await save("SHA256.json", manifest);
-    console.log(JSON.stringify({ mode, status: report.status, cleanup: report.cleanup, evidence }));
+    const result = await evidenceWriter.finish(report, {
+      coreRecords: {
+        "rpc.json": records,
+        "memory.json": metrics,
+        "commands.json": commands,
+        "gateway-startup.json": gatewayDiagnostics(),
+      },
+      logs: [
+        { name: "gateway-stdout.log", text: gateway?.stdout ?? "", overflow: gateway?.overflow },
+        { name: "gateway-stderr.log", text: gateway?.stderr ?? "", overflow: gateway?.overflow },
+        ...processes
+          .filter((p) => p.label !== "sample")
+          .map((p) => ({ name: path.basename(p.logPath), file: p.logPath, overflow: p.overflow })),
+      ],
+    });
+    console.log(JSON.stringify({ ...result, evidence }));
     const expected = { red: "expected-red", green: "green", preflight: "preflight-ready" }[mode];
-    process.exitCode = report.status === expected ? 0 : 1;
+    process.exitCode = result.status === expected ? 0 : 1;
     if (report.cleanup === "failed") process.exit(1); // Verdict is flushed; the disposable job owns OS teardown.
   }
 }

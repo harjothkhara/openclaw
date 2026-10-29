@@ -12,6 +12,7 @@ function copy(key, counter) {
     frontmost: true,
     appRole: "AXApplication",
     windowRole: "AXWindow",
+    operationBudgetMs: 3000,
     elapsedMs: 25,
     threadMenuCount: 1,
     threadEnabled: true,
@@ -49,7 +50,13 @@ function fixture() {
       pressedUptimeMs: 200,
       returnedUptimeMs: 210,
     },
-    ping: { ...r, action: "ping", newThreadPresses: 0, sampledUptimeMs: 10301 },
+    ping: {
+      ...r,
+      action: "ping",
+      operationBudgetMs: 1000,
+      newThreadPresses: 0,
+      sampledUptimeMs: 10301,
+    },
   };
 }
 test("fresh existing-menu copy receipts identify the selected canonical durable session", () => {
@@ -100,6 +107,18 @@ for (const [name, mutate] of [
     "unfocused app",
     (r) => {
       r.selected.frontmost = false;
+    },
+  ],
+  [
+    "mismatched budget declaration",
+    (r) => {
+      r.selected.operationBudgetMs = 4000;
+    },
+  ],
+  [
+    "missing budget declaration",
+    (r) => {
+      delete r.ping.operationBudgetMs;
     },
   ],
   [
