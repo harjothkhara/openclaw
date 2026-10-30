@@ -152,6 +152,7 @@ AX stages do not retain candidate attribute values, so this run cannot tell
 whether the control was missing, duplicated, or disabled. The read-only probe
 now records at most 16 toolbar button candidates as role and Boolean matches
 against the expected title, description, and help; it exports no raw AX text.
+If a 17th candidate appears, it records the bounded first 16 before failing.
 It fails distinctly for missing, ambiguous, or disabled controls. This is
 diagnostic only: the selector and no-action preflight boundary are unchanged.
 

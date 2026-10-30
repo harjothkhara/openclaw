@@ -153,7 +153,10 @@ final class TargetedMenuProbe {
             try self.visit()
             let role = try self.role(node)
             if ["AXMenuButton", kAXPopUpButtonRole, kAXButtonRole].contains(role) {
-                guard candidates.count < 16 else { throw self.fail("thread-candidate-budget") }
+                if candidates.count == 16 {
+                    self.markCandidates(candidates, matchedCount: buttons.count)
+                    throw self.fail("thread-candidate-budget")
+                }
                 let title = try self.value(node, kAXTitleAttribute, optional: true) as? String
                 let description = try self.value(node, kAXDescriptionAttribute, optional: true) as? String
                 let help = try self.value(node, kAXHelpAttribute, optional: true) as? String
