@@ -2,7 +2,14 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-import { verdict, RED, GREEN_COLOR, MAGENTA } from "./oracle.mjs";
+import {
+  countRelevantMacConnections,
+  observeRedBaseline,
+  verdict,
+  RED,
+  GREEN_COLOR,
+  MAGENTA,
+} from "./oracle.mjs";
 import { primingVerdict, talkRequest, talkResponse, forbidden } from "./priming.mjs";
 test("required baseline is true PR merge-base", () =>
   assert.equal(RED, "1299676aacb6230a0960bd4f2178fb7ddd103849"));
@@ -89,6 +96,60 @@ const image = (color) => ({
     magenta: color === "magenta" ? 600 : 0,
     green: color === "green" ? 600 : 0,
   },
+});
+test("base stays magenta for the full head-resolution window", async () => {
+  let time = 0;
+  const samples = [];
+  const options = {
+    now: () => time,
+    sleep: async (ms) => {
+      time += ms;
+    },
+    healthy: () => {},
+    capture: async (name) => {
+      samples.push({ name, time });
+      return image("magenta");
+    },
+  };
+  const result = await observeRedBaseline(options);
+  assert(result.elapsedMs >= 45_000);
+  assert(samples.length >= 10);
+  assert.equal(samples.at(-1).name, "red-final");
+  time = 0;
+  await assert.rejects(
+    observeRedBaseline({
+      ...options,
+      capture: async () => image(time >= 40_000 ? "green" : "magenta"),
+    }),
+    /magenta dominance/,
+  );
+});
+test("only closed preselection sockets are excluded, including late Mac identification", () => {
+  const mac = (ordinal, closed) => ({
+    ordinal,
+    closed,
+    identity: { client: "openclaw-macos", role: "operator" },
+  });
+  const connections = new Map([
+    ["retired-before-selection", mac(1, true)],
+    ["selected", mac(2, false)],
+  ]);
+  const openAtSelection = new Set(["selected"]);
+  assert.equal(countRelevantMacConnections(connections, openAtSelection, 2), 1);
+  connections.set("opened-after-selection", mac(3, true));
+  assert.equal(countRelevantMacConnections(connections, openAtSelection, 2), 2);
+  connections.delete("opened-after-selection");
+  connections.set("other-open-at-selection", mac(1, false));
+  openAtSelection.add("other-open-at-selection");
+  assert.equal(countRelevantMacConnections(connections, openAtSelection, 2), 2);
+  connections.delete("other-open-at-selection");
+  openAtSelection.delete("other-open-at-selection");
+  const lateIdentified = { ordinal: 1, closed: false, identity: {} };
+  connections.set("identity-pending-at-selection", lateIdentified);
+  openAtSelection.add("identity-pending-at-selection");
+  assert.equal(countRelevantMacConnections(connections, openAtSelection, 2), 1);
+  lateIdentified.identity = { client: "openclaw-macos", role: "operator" };
+  assert.equal(countRelevantMacConnections(connections, openAtSelection, 2), 2);
 });
 const connection = {
   conn: "native-1",

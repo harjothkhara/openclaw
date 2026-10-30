@@ -43,6 +43,31 @@ export function dominance(s, color) {
     "No clear " + color + " dominance in native send control",
   );
 }
+export async function observeRedBaseline({ capture, healthy, sleep, now = Date.now }) {
+  const started = now(),
+    until = started + 45_000;
+  let after;
+  for (let i = 0; now() < until; i++) {
+    healthy();
+    after = await capture("red-hold-" + i);
+    dominance(after, "magenta");
+    await sleep(Math.min(5_000, Math.max(0, until - now())));
+  }
+  healthy();
+  after = await capture("red-final");
+  dominance(after, "magenta");
+  const elapsedMs = now() - started;
+  assert(elapsedMs >= 45_000, "Base observation window was too short");
+  return { after, elapsedMs };
+}
+export function countRelevantMacConnections(connections, openAtSelection, selectedOrdinal) {
+  return [...connections].filter(
+    ([id, c]) =>
+      c.identity.client === "openclaw-macos" &&
+      c.identity.role === "operator" &&
+      (openAtSelection.has(id) || c.ordinal > selectedOrdinal),
+  ).length;
+}
 export function verdict(mode, before, after, receipt) {
   assert(["red", "green"].includes(mode));
   live(receipt.beforeConnection);

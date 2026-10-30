@@ -19,6 +19,8 @@ import {
   live,
   validImage,
   dominance,
+  observeRedBaseline,
+  countRelevantMacConnections,
   verdict,
 } from "./oracle.mjs";
 import {
@@ -31,6 +33,7 @@ import {
   primingVerdict,
 } from "./priming.mjs";
 import { createProcessGuard } from "./process-guard.mjs";
+import { configEventForwarded, forwardNativeFrame } from "./relay-forward.mjs";
 const execute = promisify(execFile),
   here = path.dirname(fileURLToPath(import.meta.url));
 const bounded = async (label, promise, ms) => {
@@ -146,6 +149,9 @@ async function main() {
     monitorBusy = false,
     stoppingApp = false;
   let serial = 0,
+    connectionOrdinal = 0,
+    selectedOrdinal = 0,
+    openAtSelection = new Set(),
     providerPosts = 0,
     inferenceRequests = 0,
     disabledSeq = null;
@@ -564,7 +570,14 @@ async function main() {
         pending = new Map(),
         queue = [];
       let queued = 0;
-      const c = { frontend: front, upstream: up, identity: {}, admitted: false, closed: false };
+      const c = {
+        frontend: front,
+        upstream: up,
+        identity: {},
+        admitted: false,
+        closed: false,
+        ordinal: ++connectionOrdinal,
+      };
       connections.set(conn, c);
       function observe(side, bytes) {
         assert(bytes.length <= 2 * 1024 * 1024, "Frame budget");
@@ -623,8 +636,10 @@ async function main() {
             (!row.ok || row.phase === "denied")
           )
             throw Error("Native Talk permission/config request failed");
-        } else if (side === "res" && f.type === "event" && f.event === "config.changed")
-          record({ side: "event", conn, method: f.event, ...c.identity });
+        } else if (side === "res" && f.type === "event" && f.event === "config.changed") {
+          const upstream = record({ side: "upstream-event", conn, method: f.event, ...c.identity });
+          return { conn, method: f.event, ...c.identity, upstreamSeq: upstream.seq };
+        }
       }
       front.on("message", (data, binary) => {
         try {
@@ -638,7 +653,7 @@ async function main() {
             queue.push([data, binary]);
           }
         } catch (e) {
-          fail(e);
+          if (conn === proofConn) fail(e);
           front.terminate();
           up.terminate();
         }
@@ -649,19 +664,35 @@ async function main() {
         queued = 0;
       });
       up.on("message", (data, binary) => {
-        try {
-          observe("res", data);
-          assert(front.bufferedAmount < 4 * 1024 * 1024, "Relay backpressure");
-          if (front.readyState === 1) front.send(data, { binary });
-        } catch (e) {
-          fail(e);
+        const forwardingFailed = (error) => {
+          if (!shuttingDown && conn === proofConn) fail(error);
           front.terminate();
           up.terminate();
+        };
+        try {
+          const event = observe("res", data);
+          const forwarded = forwardNativeFrame(
+            front,
+            data,
+            binary,
+            () => {
+              if (event && !shuttingDown)
+                record({ side: "event", delivery: "native-write-complete", ...event });
+            },
+            forwardingFailed,
+            conn === proofConn,
+          );
+          if (!forwarded) {
+            front.terminate();
+            up.terminate();
+          }
+        } catch (error) {
+          forwardingFailed(error);
         }
       });
       for (const s of [front, up])
         s.on("error", (e) => {
-          if (!shuttingDown) fail(e);
+          if (!shuttingDown && conn === proofConn) fail(e);
         });
       const closed = () => {
         if (c.closed) return;
@@ -754,6 +785,8 @@ async function main() {
       assert(cs.length <= 1, "More than one native operator");
       if (!cs.length) return false;
       proofConn = cs[0][0];
+      selectedOrdinal = connectionOrdinal;
+      openAtSelection = new Set([...connections].filter(([, c]) => !c.closed).map(([id]) => id));
       return true;
     });
     live(connectionState(proofConn));
@@ -891,18 +924,12 @@ async function main() {
     const persisted = await call("config.get");
     assert.equal(persisted.config.ui.prefs.accent, GREEN_COLOR);
     assert.equal(persisted.config.ui.seamColor, MAGENTA);
-    await waitFor("config.changed delivered to native connection", () =>
-      records.some(
-        (r) =>
-          r.t >= mutationAt &&
-          r.conn === proofConn &&
-          r.side === "event" &&
-          r.method === "config.changed",
-      ),
+    await waitFor("config.changed written to the same native connection", () =>
+      configEventForwarded(records, proofConn, mutationAt),
     );
     // The true base lacks this reader; require its response only on the fixed head.
     if (mode === "green")
-      await waitFor("native config.get consumed saved green response", () =>
+      await waitFor("Gateway answered native config.get with saved green", () =>
         records.some(
           (r) =>
             r.requestedAt >= mutationAt &&
@@ -914,25 +941,33 @@ async function main() {
         ),
       );
     let after;
-    const limit = Date.now() + 15000;
-    for (let i = 0; Date.now() < limit; i++) {
-      healthy();
-      after = await capture("after-" + i);
-      // Invalid capture fails immediately; a color transition can settle within the bounded window.
-      try {
-        dominance(after, mode === "red" ? "magenta" : "green");
-        break;
-      } catch (e) {
-        if (i >= 4) throw e;
-        await sleep(500);
+    if (mode === "red") {
+      // The unchanged base must remain magenta for the head's full resolution window.
+      // A single early frame cannot establish that it would not turn green later.
+      const baseline = await observeRedBaseline({ capture, healthy, sleep });
+      after = baseline.after;
+      report.redObservationMs = baseline.elapsedMs;
+    } else {
+      const limit = Date.now() + 15_000;
+      for (let i = 0; Date.now() < limit; i++) {
+        healthy();
+        after = await capture("after-" + i);
+        // Invalid capture fails immediately; a color transition can settle within the bounded window.
+        try {
+          dominance(after, "green");
+          break;
+        } catch (e) {
+          if (i >= 4) throw e;
+          await sleep(500);
+        }
       }
-    }
-    // Two further observed frames prevent a single transient color from being the verdict.
-    for (let i = 0; i < 2; i++) {
-      await sleep(750);
-      healthy();
-      after = await capture("stable-" + i);
-      dominance(after, mode === "red" ? "magenta" : "green");
+      // Two further observed frames prevent a single transient color from being the verdict.
+      for (let i = 0; i < 2; i++) {
+        await sleep(750);
+        healthy();
+        after = await capture("stable-" + i);
+        dominance(after, "green");
+      }
     }
     const finalStatus = await status("final-status");
     assert.equal(finalStatus.primary.connection.state, "connected");
@@ -940,20 +975,12 @@ async function main() {
       primingRows: records,
       beforeConnection: report.beforeConnection,
       afterConnection: connectionState(proofConn),
-      macConnections: [...connections.values()].filter(
-        (c) => c.identity.client === "openclaw-macos" && c.identity.role === "operator",
-      ).length,
+      macConnections: countRelevantMacConnections(connections, openAtSelection, selectedOrdinal),
       patchOk: patch.ok === true,
       patchAccent: GREEN_COLOR,
       persistedAccent: persisted.config.ui.prefs.accent,
       operatorColor: persisted.config.ui.seamColor,
-      configEventOnProofConnection: records.some(
-        (r) =>
-          r.t >= mutationAt &&
-          r.conn === proofConn &&
-          r.side === "event" &&
-          r.method === "config.changed",
-      ),
+      configEventOnProofConnection: configEventForwarded(records, proofConn, mutationAt),
       personalAccent: personal.personalAccent,
       inferenceRequests,
       providerPosts,
