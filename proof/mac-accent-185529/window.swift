@@ -14,8 +14,19 @@ func attr(_ node: AXUIElement, _ name: String) throws -> CFTypeRef? {
     var value: CFTypeRef?
     let result = AXUIElementCopyAttributeValue(node, name as CFString, &value)
     if result == .attributeUnsupported || result == .noValue { return nil }
-    try require(result == .success, "Unreadable AX attribute: " + name)
+    try require(result == .success, "Unreadable AX attribute: " + name + " AXError " + String(result.rawValue))
     return value
+}
+func optionalIdentifier(_ node: AXUIElement) throws -> String? {
+    var names: CFArray?
+    let namesResult = AXUIElementCopyAttributeNames(node, &names)
+    guard namesResult == .success, let names else {
+        throw NSError(domain: "Cannot enumerate AX attributes AXError " + String(namesResult.rawValue), code: 1)
+    }
+    // An absent identifier is safe to skip; a failed read of an advertised one
+    // leaves the Talk activity state unknown and must abort the proof.
+    if !(names as NSArray).contains(kAXIdentifierAttribute as String) { return nil }
+    return try attr(node, kAXIdentifierAttribute) as? String
 }
 func rect(_ node: AXUIElement) throws -> CGRect {
     guard let position = try attr(node, kAXPositionAttribute), let size = try attr(node, kAXSizeAttribute),
@@ -55,7 +66,7 @@ func inspect(_ pid: pid_t, command: String) throws -> [String: Any] {
         try require(count <= 2500 && depth <= 30, "Incomplete AX traversal")
         let role = try attr(e, kAXRoleAttribute) as? String
         try require(role != nil && role != "AXWebArea", "Not an exclusively native Chat tree")
-        switch try attr(e, kAXIdentifierAttribute) as? String {
+        switch try optionalIdentifier(e) {
         case "chat-send-message": sends.append(e)
         case "chat-realtime-control": talks.append(e)
         case "chat-talk-activity": talkActive = true
@@ -115,7 +126,10 @@ func inspect(_ pid: pid_t, command: String) throws -> [String: Any] {
         result["pressed"] = command
         return result
     }
-    try require(onlyChat && !talkActive, "Only native Chat with Talk disabled may be measured")
+    // The Talk button's exact label is the positive off-state guard. An activity
+    // descendant may have an unreadable optional AX identifier during traversal.
+    try require(talks.count == 1 && talkEnabled && talkLabel == "Start realtime chat" &&
+                onlyChat && !talkActive, "Only native Chat with Talk disabled may be measured")
     if command == "draft" {
         try require(value == "" && talkLabel == "Start realtime chat", "Draft must follow disabled Talk")
         try require(AXUIElementSetAttributeValue(editors[0], kAXValueAttribute as CFString,
