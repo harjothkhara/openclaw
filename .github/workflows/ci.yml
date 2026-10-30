@@ -9,10 +9,10 @@ on:
         required: true
         type: string
       live_attempt:
-        description: Codex serial live-app slot (fourth authorized after synthetic-helper overflow; admission-only failure does not count)
+        description: Codex serial live-app slot (fifth authorized after AX setup failure; admission-only failure does not count)
         required: true
         type: choice
-        options: ["1", "2", "3", "4"]
+        options: ["1", "2", "3", "4", "5"]
       serial_confirmed:
         description: Codex verified no other Mac proof queued/running and ledger permits this attempt
         required: true
@@ -38,7 +38,7 @@ jobs:
             if (context.repo.owner !== 'harjothkhara' || context.repo.repo !== 'openclaw' || context.ref !== 'refs/heads/proof/mac-accent-128922-2026-10-27') throw Error('Wrong fork/ref');
             if (!/^[a-f0-9]{40}$/.test(context.payload.inputs.proof_sha || '') || context.payload.inputs.proof_sha !== context.sha) throw Error('Dispatched proof commit differs from reviewed SHA');
             if (context.payload.inputs.serial_confirmed !== 'true') throw Error('Codex serial/attempt ledger confirmation required');
-            if (!['1','2','3','4'].includes(context.payload.inputs.live_attempt)) throw Error('Invalid live-attempt slot');
+            if (!['1','2','3','4','5'].includes(context.payload.inputs.live_attempt)) throw Error('Invalid live-attempt slot');
             const repo = context.repo;
             const current = (await github.rest.actions.getWorkflowRun({...repo,run_id:context.runId})).data;
             if (current.run_attempt !== 1) throw Error('Do not rerun jobs; a new authorized dispatch consumes the next ledger slot');
@@ -71,7 +71,7 @@ jobs:
               const enteredAppBuild = jobs.jobs.some(j => j.name === 'accent' && j.steps?.some(s => s.name === 'Package red source without modifications' && s.status !== 'queued' && s.conclusion !== 'skipped'));
               if (legacyCharged || enteredAppBuild) liveAttempts++;
             }
-            if (liveAttempts >= 4 || liveAttempts + 1 !== Number(context.payload.inputs.live_attempt)) throw Error('Four live-app attempt budget/ledger mismatch');
+            if (liveAttempts >= 5 || liveAttempts + 1 !== Number(context.payload.inputs.live_attempt)) throw Error('Five live-app attempt budget/ledger mismatch');
             const pr = (await github.rest.pulls.get({owner:'openclaw',repo:'openclaw',pull_number:185529})).data;
             if (pr.head.sha !== 'b34033c907786da68f99e5006d0feb2bf8793b7f' || !pr.draft) throw Error('Pinned draft PR changed');
   accent:
