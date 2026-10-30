@@ -145,6 +145,16 @@ count or second failure stops the probe; no action is retried. The previous run
 does not establish that the child count changed, so this guard may still leave
 the next run setup-incomplete.
 
+Hosted run 40976103873 reached successful native chat.history and an owned
+rendered window. The targeted helper traversed the toolbar but stopped at its
+combined Thread-control uniqueness/enabled guard before any menu action. Its
+AX stages do not retain candidate attribute values, so this run cannot tell
+whether the control was missing, duplicated, or disabled. The read-only probe
+now records at most 16 toolbar button candidates as role and Boolean matches
+against the expected title, description, and help; it exports no raw AX text.
+It fails distinctly for missing, ambiguous, or disabled controls. This is
+diagnostic only: the selector and no-action preflight boundary are unchanged.
+
 Optional ax_preflight_only:true is startup/Thread-target diagnostics only. It
 never opens/presses a menu or copies the clipboard, forbids creation/inference,
 skips green packaging and ends preflight-ready/nativeUIProof=false, not product

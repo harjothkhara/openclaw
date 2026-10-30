@@ -41,6 +41,17 @@ final class TargetedMenuProbe {
             FileHandle.standardError.write(Data([10]))
         }
     }
+    func markCandidates(_ candidates: [[String: Any]], matchedCount: Int) {
+        self.stage = "thread-candidates"
+        if let data = try? JSONSerialization.data(withJSONObject: [
+            "stage": self.stage, "pid": self.pid, "visited": self.visited,
+            "elapsedMs": self.elapsedMs, "candidateCount": candidates.count,
+            "matchedCount": matchedCount, "candidates": candidates,
+        ]) {
+            FileHandle.standardError.write(data)
+            FileHandle.standardError.write(Data([10]))
+        }
+    }
     var elapsedMs: Double {
         Double(DispatchTime.now().uptimeNanoseconds - self.started) / 1_000_000
     }
@@ -137,14 +148,24 @@ final class TargetedMenuProbe {
         try findToolbars(window, 0)
         guard toolbars.count == 1 else { throw self.fail("toolbar-not-unique") }
         var buttons: [AXUIElement] = []
+        var candidates: [[String: Any]] = []
         func findThread(_ node: AXUIElement, _ depth: Int) throws {
             try self.visit()
             let role = try self.role(node)
             if ["AXMenuButton", kAXPopUpButtonRole, kAXButtonRole].contains(role) {
+                guard candidates.count < 16 else { throw self.fail("thread-candidate-budget") }
                 let title = try self.value(node, kAXTitleAttribute, optional: true) as? String
                 let description = try self.value(node, kAXDescriptionAttribute, optional: true) as? String
                 let help = try self.value(node, kAXHelpAttribute, optional: true) as? String
-                if (title == "Thread" || description == "Thread") && (help == nil || help == "Thread actions") {
+                let matches = (title == "Thread" || description == "Thread") &&
+                    (help == nil || help == "Thread actions")
+                candidates.append([
+                    "role": role, "titleIsThread": title == "Thread",
+                    "descriptionIsThread": description == "Thread",
+                    "helpIsThreadActions": help == "Thread actions",
+                    "helpAbsent": help == nil, "matched": matches,
+                ])
+                if matches {
                     buttons.append(node)
                 }
                 return
@@ -153,9 +174,12 @@ final class TargetedMenuProbe {
             for child in try self.children(node) { try findThread(child, depth + 1) }
         }
         try findThread(toolbars[0], 0)
-        guard buttons.count == 1,
-              (try self.value(buttons[0], kAXEnabledAttribute) as? Bool) == true
-        else { throw self.fail("thread-control-not-unique-enabled") }
+        self.markCandidates(candidates, matchedCount: buttons.count)
+        guard !buttons.isEmpty else { throw self.fail("thread-control-missing") }
+        guard buttons.count == 1 else { throw self.fail("thread-control-ambiguous") }
+        let enabled = try self.value(buttons[0], kAXEnabledAttribute) as? Bool
+        self.mark("thread-control-enabled:" + String(enabled == true))
+        guard enabled == true else { throw self.fail("thread-control-disabled") }
         return buttons[0]
     }
     func actions(_ node: AXUIElement) throws -> [String] {
