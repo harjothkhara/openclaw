@@ -156,6 +156,14 @@ If a 17th candidate appears, it records the bounded first 16 before failing.
 It fails distinctly for missing, ambiguous, or disabled controls. This is
 diagnostic only: the selector and no-action preflight boundary are unchanged.
 
+Read-only hosted preflight 40986331837 found three toolbar buttons. The only
+AXMenuButton had exact help Thread actions but no Thread title or description,
+so the old selector stopped as missing before checking enabled or taking any
+action. The helper now also accepts that exact help on an AXMenuButton within
+the already unique toolbar. It still requires exactly one match and AXEnabled
+before any later action; no action or product red/green verdict is inferred from
+the preflight. A fresh read-only hosted preflight must qualify this selector.
+
 Optional ax_preflight_only:true is startup/Thread-target diagnostics only. It
 never opens/presses a menu or copies the clipboard, forbids creation/inference,
 skips green packaging and ends preflight-ready/nativeUIProof=false, not product

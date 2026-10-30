@@ -160,8 +160,10 @@ final class TargetedMenuProbe {
                 let title = try self.value(node, kAXTitleAttribute, optional: true) as? String
                 let description = try self.value(node, kAXDescriptionAttribute, optional: true) as? String
                 let help = try self.value(node, kAXHelpAttribute, optional: true) as? String
-                let matches = (title == "Thread" || description == "Thread") &&
-                    (help == nil || help == "Thread actions")
+                // The icon-only SwiftUI menu exposes its exact help without a Thread title.
+                let matches = (role == "AXMenuButton" && help == "Thread actions") ||
+                    ((title == "Thread" || description == "Thread") &&
+                        (help == nil || help == "Thread actions"))
                 candidates.append([
                     "role": role, "titleIsThread": title == "Thread",
                     "descriptionIsThread": description == "Thread",
