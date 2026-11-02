@@ -97,10 +97,11 @@ starts. The coordinator must prevent duplicate dispatches and check the shared
 Mac slot immediately before each dispatch. No dispatch here.
 
 Compilation and cheap shared/exact-helper qualification run BEFORE packaging.
-The same job then reuses exact-SHA native caches, builds true base, verifies its
-bundle/runtime identities and complete config, starts isolated Gateway and app,
-requires an owned frontmost onscreen window and captures it before targeted AX.
-After base red qualifies, it builds/runs exact PR head and requires green.
+The same job then reuses exact-SHA native caches, builds/runs the exact PR head,
+and checks shared consumers before retiring that disposable source checkout.
+It then builds true base, verifies bundle/runtime identities and complete config,
+starts isolated Gateway and app, and requires an owned frontmost onscreen window
+before targeted AX. The final gate still requires both real-app green and red.
 
 Base red requires one acknowledged native menu action, overlapping sampler,
 original repeated recursive stack signatures, positive post-press allocation
@@ -202,3 +203,18 @@ The existing 90s startup admission may repeat only a read-only probe after that
 observed help-read failure, reconfirming live owned/frontmost window each time.
 Action failures, other error codes, and other attributes still stop immediately.
 No New Thread or clipboard action is retried and product verdicts are unchanged.
+
+Run 41530040415 selected the Thread control and acknowledged opening its menu,
+then stopped at AXChildren count cannotComplete before copying a key or creating
+a thread. Pending-menu children reads may now return empty on cannotComplete;
+the existing openMenu loop polls within its original monotonic 3s work budget.
+The opening AXPress is never repeated. Other traversals retain strict errors.
+Full proof now collects exact-head green/shared results before the baseline arm,
+retiring the disposable green source to preserve runner disk space. The final
+gate still requires both exact-source red and green verdicts.
+
+Before any package build, a small independent SwiftUI toolbar-menu fixture now
+qualifies actual one-press menu opening, fresh Copy Session Key, one New Thread,
+and post-action copy using this exact AX binary. The fixture emits independent
+key/action receipts. This is helper qualification only, never product proof;
+final real-app red/green guards and immutable shared capture fixture are unchanged.

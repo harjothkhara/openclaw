@@ -93,7 +93,8 @@ final class TargetedMenuProbe {
         self.mark("children-count")
         var count: CFIndex = 0
         let error = AXUIElementGetAttributeValueCount(node, kAXChildrenAttribute as CFString, &count)
-        if allowPendingMenu && (error == .noValue || error == .attributeUnsupported) { return [] }
+        // SwiftUI attaches the menu asynchronously after the one AXPress. Retry reads only.
+        if allowPendingMenu && (error == .noValue || error == .attributeUnsupported || error == .cannotComplete) { return [] }
         guard error == .success else { throw self.fail("children-count", Int(error.rawValue)) }
         guard count >= 0, count <= 64 else { throw self.fail("children-budget") }
         if count == 0 { return [] }
@@ -101,6 +102,7 @@ final class TargetedMenuProbe {
         self.mark("children-values")
         var values: CFArray?
         var read = AXUIElementCopyAttributeValues(node, kAXChildrenAttribute as CFString, 0, count, &values)
+        if allowPendingMenu && read == .cannotComplete { return [] }
         if read == .cannotComplete {
             try self.checkBudget(node)
             self.mark("children-recount")

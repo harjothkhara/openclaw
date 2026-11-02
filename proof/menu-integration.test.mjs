@@ -81,7 +81,7 @@ test("serial first-attempt admission precedes Mac allocation and shared canary p
     2,
     "Both preflight and red/green gates must verify actual required artifact hashes",
   );
-  assert.equal((workflow.match(/node --input-type=module/g) ?? []).length, 2);
+  assert.equal((workflow.match(/node --input-type=module/g) ?? []).length, 3);
 });
 
 test("proof entry point preserves canonical CI and pins every proof Action", async () => {

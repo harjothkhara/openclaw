@@ -122,6 +122,51 @@ jobs:
           node proof-runner/proof/qualified-canary.mjs
           echo "OPENCLAW_NEW_THREAD_AX_HELPER=$OPENCLAW_NEW_THREAD_AX_HELPER" >> "$GITHUB_ENV"
           echo "OPENCLAW_NEW_THREAD_AX_HELPER_SHA256=$(shasum -a 256 "$OPENCLAW_NEW_THREAD_AX_HELPER" | cut -d ' ' -f1)" >> "$GITHUB_ENV"
+      - name: Qualify native menu effects before app packaging
+        timeout-minutes: 2
+        shell: bash
+        run: |
+          set -euo pipefail
+          evidence="$GITHUB_WORKSPACE/new-thread-runner/evidence"
+          fixture="$RUNNER_TEMP/new-thread-menu-fixture"
+          xcrun swiftc -target "$(uname -m)-apple-macosx15.0" -parse-as-library proof-runner/proof/menu-fixture.swift -o "$fixture"
+          "$fixture" > "$evidence/menu-fixture.jsonl" 2> "$evidence/menu-fixture-stderr.log" &
+          menu_pid=$!
+          trap 'if jobs -pr | grep -qx "$menu_pid"; then kill -KILL "$menu_pid"; fi; wait "$menu_pid" 2>/dev/null || true' EXIT
+          for attempt in {1..100}; do
+            if grep -q '"ready"' "$evidence/menu-fixture.jsonl"; then break; fi
+            sleep 0.1
+          done
+          grep -q '"ready"' "$evidence/menu-fixture.jsonl"
+          for stage in before new after; do
+            action=copy-key
+            if [[ "$stage" == new ]]; then action=new; fi
+            "$OPENCLAW_NEW_THREAD_AX_HELPER" "$menu_pid" "$fixture" "$action" 3000 \
+              > "$evidence/menu-$stage.json" 2> "$evidence/menu-$stage.log"
+          done
+          MENU_PID="$menu_pid" node --input-type=module - <<'NODE'
+          import assert from 'node:assert/strict';
+          import fs from 'node:fs';
+          import { requireAXBudgetReceipt } from './proof-runner/proof/ax-budget.mjs';
+          import { requireCopyReceipt } from './proof-runner/proof/active-key.mjs';
+          const root = 'new-thread-runner/evidence/';
+          const pid = Number(process.env.MENU_PID);
+          const read = stage => JSON.parse(fs.readFileSync(root + 'menu-' + stage + '.json', 'utf8'));
+          const before = read('before'), action = read('new'), after = read('after');
+          requireCopyReceipt(before, pid); requireCopyReceipt(after, pid);
+          requireAXBudgetReceipt(action, 'new');
+          assert.equal(action.pid, pid); assert.equal(action.complete, true);
+          assert.equal(action.newThreadPresses, 1);
+          assert.equal(before.key, 'fixture/main'); assert.equal(after.key, 'fixture/new');
+          const events = fs.readFileSync(root + 'menu-fixture.jsonl', 'utf8').trim().split('\n').map(JSON.parse);
+          assert.ok(events.every(e => e.pid === pid));
+          assert.equal(events.filter(e => e.action === 'new').length, 1);
+          assert.equal(events.filter(e => e.action === 'copy-key').length, 2);
+          fs.writeFileSync(root + 'menu-fixture-verdict.json', JSON.stringify({
+            kind: 'native-menu-fixture-diagnostic-not-product-proof', status: 'passed', pid,
+            newThreadPresses: 1, before: before.key, after: after.key,
+          }, null, 2));
+          NODE
       - name: Compile independent window observer before packaging
         timeout-minutes: 2
         shell: bash
@@ -131,6 +176,52 @@ jobs:
           "$RUNNER_TEMP/new-thread-window-observer" --selftest
           echo "OPENCLAW_NEW_THREAD_WINDOW_HELPER=$RUNNER_TEMP/new-thread-window-observer" >> "$GITHUB_ENV"
           echo "OPENCLAW_NEW_THREAD_WINDOW_HELPER_SHA256=$(shasum -a 256 "$RUNNER_TEMP/new-thread-window-observer" | cut -d ' ' -f1)" >> "$GITHUB_ENV"
+      - name: Restore exact PR native build
+        if: ${{ !inputs.ax_preflight_only }}
+        id: green-cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: sut-green/apps/macos/.build
+          key: mac-new-thread-package-macos-26-intel-${{ env.TARGET_SHA }}-${{ hashFiles('sut-green/apps/macos/Package.resolved') }}
+      - name: Build PR Mac app and Gateway
+        if: ${{ !inputs.ax_preflight_only }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd sut-green
+          BUILD_ARCHS="$(uname -m)" BUILD_CONFIG=debug ALLOW_ADHOC_SIGNING=1 OPENCLAW_SKIP_MLX_TTS=1 \
+            /bin/bash scripts/package-mac-app.sh > "$GITHUB_WORKSPACE/green-package.log" 2>&1
+      - name: Save exact PR native build
+        if: ${{ !inputs.ax_preflight_only && steps.green-cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: sut-green/apps/macos/.build
+          key: mac-new-thread-package-macos-26-intel-${{ env.TARGET_SHA }}-${{ hashFiles('sut-green/apps/macos/Package.resolved') }}
+      - name: Run guarded real-app green control
+        if: ${{ !inputs.ax_preflight_only }}
+        timeout-minutes: 10
+        shell: bash
+        run: |
+          set -euo pipefail
+          /usr/bin/perl -e 'alarm 600; exec @ARGV' node proof-runner/proof/new-thread.mjs \
+            --source "$GITHUB_WORKSPACE/sut-green" --app "$GITHUB_WORKSPACE/sut-green/dist/OpenClaw.app" \
+            --sha "$TARGET_SHA" --mode green --out "$GITHUB_WORKSPACE/new-thread-green"
+      - name: Run exact-head shared session-creation consumer tests
+        if: ${{ !inputs.ax_preflight_only }}
+        timeout-minutes: 20
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd sut-green
+          swift test --package-path apps/shared/OpenClawKit \
+            --scratch-path "$RUNNER_TEMP/new-thread-shared" \
+            --disable-index-store -Xswiftc -gline-tables-only --no-parallel \
+            --filter 'ChatViewModelSessionActionTests|ChatGatewayTransportTests|ChatGatewayRequestTests' \
+            2>&1 | tee "$GITHUB_WORKSPACE/new-thread-runner/evidence/shared-consumer-tests.log"
+      - name: Release disposable PR checkout after retained green evidence
+        if: ${{ !inputs.ax_preflight_only }}
+        shell: bash
+        run: rm -rf -- "$GITHUB_WORKSPACE/sut-green"
       - name: Restore exact base native build
         id: base-cache
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
@@ -185,48 +276,6 @@ jobs:
         if: ${{ !inputs.ax_preflight_only }}
         shell: bash
         run: rm -rf -- "$GITHUB_WORKSPACE/sut-red"
-      - name: Restore exact PR native build
-        if: ${{ !inputs.ax_preflight_only }}
-        id: green-cache
-        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
-        with:
-          path: sut-green/apps/macos/.build
-          key: mac-new-thread-package-macos-26-intel-${{ env.TARGET_SHA }}-${{ hashFiles('sut-green/apps/macos/Package.resolved') }}
-      - name: Build PR Mac app and Gateway
-        if: ${{ !inputs.ax_preflight_only }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          cd sut-green
-          BUILD_ARCHS="$(uname -m)" BUILD_CONFIG=debug ALLOW_ADHOC_SIGNING=1 OPENCLAW_SKIP_MLX_TTS=1 \
-            /bin/bash scripts/package-mac-app.sh > "$GITHUB_WORKSPACE/green-package.log" 2>&1
-      - name: Save exact PR native build
-        if: ${{ !inputs.ax_preflight_only && steps.green-cache.outputs.cache-hit != 'true' }}
-        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
-        with:
-          path: sut-green/apps/macos/.build
-          key: mac-new-thread-package-macos-26-intel-${{ env.TARGET_SHA }}-${{ hashFiles('sut-green/apps/macos/Package.resolved') }}
-      - name: Run guarded real-app green control
-        if: ${{ !inputs.ax_preflight_only }}
-        timeout-minutes: 10
-        shell: bash
-        run: |
-          set -euo pipefail
-          /usr/bin/perl -e 'alarm 600; exec @ARGV' node proof-runner/proof/new-thread.mjs \
-            --source "$GITHUB_WORKSPACE/sut-green" --app "$GITHUB_WORKSPACE/sut-green/dist/OpenClaw.app" \
-            --sha "$TARGET_SHA" --mode green --out "$GITHUB_WORKSPACE/new-thread-green"
-      - name: Run exact-head shared session-creation consumer tests
-        if: ${{ !inputs.ax_preflight_only }}
-        timeout-minutes: 20
-        shell: bash
-        run: |
-          set -euo pipefail
-          cd sut-green
-          swift test --package-path apps/shared/OpenClawKit \
-            --scratch-path "$RUNNER_TEMP/new-thread-shared" \
-            --disable-index-store -Xswiftc -gline-tables-only --no-parallel \
-            --filter 'ChatViewModelSessionActionTests|ChatGatewayTransportTests|ChatGatewayRequestTests' \
-            2>&1 | tee "$GITHUB_WORKSPACE/new-thread-runner/evidence/shared-consumer-tests.log"
       - name: Require exact-head red and green verdicts
         if: ${{ !inputs.ax_preflight_only }}
         shell: bash
