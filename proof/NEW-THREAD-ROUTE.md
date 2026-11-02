@@ -218,3 +218,9 @@ qualifies actual one-press menu opening, fresh Copy Session Key, one New Thread,
 and post-action copy using this exact AX binary. The fixture emits independent
 key/action receipts. This is helper qualification only, never product proof;
 final real-app red/green guards and immutable shared capture fixture are unchanged.
+
+Cheap fixture run 41536886698 compiled and exercised menu/copy operations but
+found no New Thread callback before the immediate subsequent copy. Qualification
+now waits up to10s for the independent fixture new-action receipt before opening
+another menu, matching the product driver's post-press correlation interval.
+No menu action is retried and the fixture must still record exactly one new.

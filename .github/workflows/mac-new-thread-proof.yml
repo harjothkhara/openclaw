@@ -143,6 +143,13 @@ jobs:
             if [[ "$stage" == new ]]; then action=new; fi
             "$OPENCLAW_NEW_THREAD_AX_HELPER" "$menu_pid" "$fixture" "$action" 3000 \
               > "$evidence/menu-$stage.json" 2> "$evidence/menu-$stage.log"
+            if [[ "$stage" == new ]]; then
+              for attempt in {1..100}; do
+                if grep -q '"action":"new"' "$evidence/menu-fixture.jsonl"; then break; fi
+                sleep 0.1
+              done
+              grep -q '"action":"new"' "$evidence/menu-fixture.jsonl"
+            fi
           done
           MENU_PID="$menu_pid" node --input-type=module - <<'NODE'
           import assert from 'node:assert/strict';
