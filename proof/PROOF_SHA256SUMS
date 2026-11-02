@@ -1,4 +1,4 @@
-025a3fa4bc08f1d8e7792d057f78dd55342fa63e9062e49cec0118a35e4ec02d  ./NEW-THREAD-ROUTE.md
+aea4de87e174e17b48e7bfa849f7b83b3c6c83bef1821366dce07be6094a2aff  ./NEW-THREAD-ROUTE.md
 38af0b49e889487cd797446ee16e7851fac39197b3c13928841b39368ca69cac  ./action-timing.test.mjs
 73567c72b3729f9a2107e95912f89ff7c15440c8501737e32db1b9ed4801b0ac  ./active-key.mjs
 3f19805ab645a13770584d606a6bd10945aaa73ddf900a78490bee1d91bb6063  ./active-key.test.mjs
@@ -8,7 +8,7 @@ df5ee52eed00039e31417af17c2ed3b745d6cf056d29bacd152dab232e478bf0  ./ax-budget.mj
 38773e6eb126a6faa27798c6f5a88929f801e3038ea19dceac8827369825378d  ./evidence.test.mjs
 7afd69c1263b59f21f9ec1bca3de8430eb86cf550d9a5d7b58eeab0ee2e002da  ./menu-integration.test.mjs
 068760c364e61beb36cb02341a42f51f7829085dc1e7f953af333a2265c2713f  ./new-thread-window.swift
-b01a6f0d0d3d7920750c272dd7faf20f5fff1bac25a15c376aaf42ea2cad6362  ./new-thread.mjs
+1f22a8a38eeb8000a173f03945fb2412d85ddb5a26ff6938e10f87e7ba19dc0b  ./new-thread.mjs
 c36ad87301408a6cfb06ea0278a1cfd032fb4e39860b03575d4c87eb0ec4f666  ./new-thread.test.mjs
 8542dd5cbf049e3acbe8ba0b00dfa5614b17288cd2642bc6721378701b1d15b0  ./owned-processes.mjs
 315b46524823da68f428370e3000b668d2db42ea284d2f4bbef6372867fb7cde  ./owned-processes.test.mjs
@@ -17,4 +17,4 @@ f722634a232e7e3c7e1c52caf9d51a248f7ef245fd76153e69a6792699eb547a  ./qualified-ca
 6ae95c0c06d081f78901b593d1bd9ee3cd3e4b6ac226a7d9cb85e544550c67a1  ./red-boundary.test.mjs
 776c69822ea4972f58efbc4cee0585737987202a7c6e75a45b8e0b139f358c45  ./review-fixes.test.mjs
 d43b1e03e6fa6d4dc60a5547d5d0eb8d303099f8c2d5a9eb358b3ad2ea29f1fe  ./targeted-menu.swift
-aa5786a07386e4e1379729bb8c835187aef6bfb0d9a27b20857f04b5194d99c5  ./window-readiness.test.mjs
+8e3033a6c18be3f3cc0c978ced4ee17355720cb758527636fbc1c35f245742d9  ./window-readiness.test.mjs

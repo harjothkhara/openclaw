@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { requireOwnedWindow } from "./new-thread.mjs";
+import { requireOwnedWindow, transientProbeRead } from "./new-thread.mjs";
 const good = {
   pid: 42,
   ready: true,
@@ -31,3 +31,19 @@ for (const [name, patch] of [
   );
 test("a desktop screenshot alone is not a window-state receipt", () =>
   assert.throws(() => requireOwnedWindow({ pngWidth: 1920, pngHeight: 1080 }, 42)));
+
+const helpRead = { pid: 42, stage: "read:AXHelp", visited: 14 };
+const helpFailure = { kind: "targeted-native-ax-error", domain: "TargetedMenu.read:AXHelp", code: -25204 };
+const trace = (read, failure) => [read, failure].map(JSON.stringify).join("\n");
+test("observed transient help read admits a fresh read-only startup probe", () => {
+  assert.equal(transientProbeRead(trace(helpRead, helpFailure), 42), true);
+  assert.equal(transientProbeRead(trace({ pid: 42, stage: "read:AXRole", visited: 0 },
+    { ...helpFailure, domain: "TargetedMenu.read:AXRole" }), 42), true);
+  for (const [read, failure] of [
+    [{ ...helpRead, pid: 99 }, helpFailure],
+    [helpRead, { ...helpFailure, code: -25205 }],
+    [helpRead, { ...helpFailure, domain: "TargetedMenu.perform" }],
+    [{ ...helpRead, stage: "perform:AXPress" }, helpFailure],
+  ]) assert.equal(transientProbeRead(trace(read, failure), 42), false);
+  assert.equal(transientProbeRead("not-json", 42), false);
+});

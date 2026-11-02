@@ -15,6 +15,19 @@ import { operationBudgetMs, requireAXBudgetReceipt } from "./ax-budget.mjs";
 import { createEvidenceWriter, PROCESS_OUTPUT_LIMIT } from "./evidence.mjs";
 import { signalOwnedGroup, retireOwnedProcesses } from "./owned-processes.mjs";
 
+// Retry only observed read-only startup failures; never repeat a menu or clipboard action.
+export function transientProbeRead(stderr, pid) {
+  let stages;
+  try { stages = stderr.trim().split("\n").map((line) => JSON.parse(line)); }
+  catch { return false; }
+  const failure = stages.at(-1), read = stages.at(-2);
+  return failure?.kind === "targeted-native-ax-error" && failure.code === -25204 &&
+    read?.pid === pid && (
+      (failure.domain === "TargetedMenu.read:AXRole" && read.stage === "read:AXRole" && read.visited === 0) ||
+      (failure.domain === "TargetedMenu.read:AXHelp" && read.stage === "read:AXHelp" && read.visited > 0)
+    );
+}
+
 export function observedResponse(request, frame) {
   return {
     method: request.method,
@@ -405,26 +418,8 @@ async function main() {
     try {
       const result = await bounded("AX process settlement", p.done, settleAfter);
       if (action === "probe" && !timedOut && result.code === 1) {
-        const lines = p.stderr.trim().split("\n");
-        let rootRead;
-        let failure;
-        if (lines.length === 2) {
-          try {
-            rootRead = JSON.parse(lines[0]);
-            failure = JSON.parse(lines[1]);
-          } catch {
-            // Unrecognized diagnostics retain the original failure below.
-          }
-        }
-        if (
-          rootRead?.pid === appProc.child.pid &&
-          rootRead.stage === "read:AXRole" &&
-          rootRead.visited === 0 &&
-          failure?.kind === "targeted-native-ax-error" &&
-          failure.domain === "TargetedMenu.read:AXRole" &&
-          failure.code === -25204
-        ) {
-          throw Object.assign(new Error("App AX root is not ready"), { code: "AX_ROOT_NOT_READY" });
+        if (transientProbeRead(p.stderr, appProc.child.pid)) {
+          throw Object.assign(new Error("App AX startup read is not ready"), { code: "AX_ROOT_NOT_READY" });
         }
       }
       assert.ok(

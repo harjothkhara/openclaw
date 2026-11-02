@@ -196,3 +196,9 @@ Run 40965501000 also stopped before any New Thread action; its hosted fixture
 and owned-window controls passed, but it is not base-red or PR-green proof.
 No real-app red or green, review rating, or ready-for-maintainer-look claim is
 made by this branch.
+
+Run 40994619133 stopped before any action on AXHelp cannotComplete (-25204).
+The existing 90s startup admission may repeat only a read-only probe after that
+observed help-read failure, reconfirming live owned/frontmost window each time.
+Action failures, other error codes, and other attributes still stop immediately.
+No New Thread or clipboard action is retried and product verdicts are unchanged.

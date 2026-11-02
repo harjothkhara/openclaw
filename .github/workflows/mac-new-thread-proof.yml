@@ -215,6 +215,18 @@ jobs:
           /usr/bin/perl -e 'alarm 600; exec @ARGV' node proof-runner/proof/new-thread.mjs \
             --source "$GITHUB_WORKSPACE/sut-green" --app "$GITHUB_WORKSPACE/sut-green/dist/OpenClaw.app" \
             --sha "$TARGET_SHA" --mode green --out "$GITHUB_WORKSPACE/new-thread-green"
+      - name: Run exact-head shared session-creation consumer tests
+        if: ${{ !inputs.ax_preflight_only }}
+        timeout-minutes: 20
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd sut-green
+          swift test --package-path apps/shared/OpenClawKit \
+            --scratch-path "$RUNNER_TEMP/new-thread-shared" \
+            --disable-index-store -Xswiftc -gline-tables-only --no-parallel \
+            --filter 'ChatViewModelSessionActionTests|ChatGatewayTransportTests|ChatGatewayRequestTests' \
+            2>&1 | tee "$GITHUB_WORKSPACE/new-thread-runner/evidence/shared-consumer-tests.log"
       - name: Require exact-head red and green verdicts
         if: ${{ !inputs.ax_preflight_only }}
         shell: bash
