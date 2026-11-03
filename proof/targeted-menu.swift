@@ -76,51 +76,43 @@ final class TargetedMenuProbe {
         else { throw self.fail("owned-app-not-frontmost") }
     }
     func value(_ node: AXUIElement, _ name: String, optional: Bool = false) throws -> CFTypeRef? {
-        try self.checkBudget(node)
-        self.mark("read:" + name)
-        var result: CFTypeRef?
-        let error = AXUIElementCopyAttributeValue(node, name as CFString, &result)
-        if optional && (error == .attributeUnsupported || error == .noValue) { return nil }
-        guard error == .success else { throw self.fail("read:" + name, Int(error.rawValue)) }
-        return result
+        while true {
+            try self.checkBudget(node)
+            self.mark("read:" + name)
+            var result: CFTypeRef?
+            let error = AXUIElementCopyAttributeValue(node, name as CFString, &result)
+            // AX messaging can report a busy app; retry reads within the same operation budget.
+            if error == .cannotComplete { Thread.sleep(forTimeInterval: 0.005); continue }
+            if optional && (error == .attributeUnsupported || error == .noValue) { return nil }
+            guard error == .success else { throw self.fail("read:" + name, Int(error.rawValue)) }
+            return result
+        }
     }
     func role(_ node: AXUIElement) throws -> String {
         guard let role = try self.value(node, kAXRoleAttribute) as? String else { throw self.fail("role") }
         return role
     }
     func children(_ node: AXUIElement, allowPendingMenu: Bool = false) throws -> [AXUIElement] {
-        try self.checkBudget(node)
-        self.mark("children-count")
-        var count: CFIndex = 0
-        let error = AXUIElementGetAttributeValueCount(node, kAXChildrenAttribute as CFString, &count)
-        // SwiftUI attaches the menu asynchronously after the one AXPress. Retry reads only.
-        if allowPendingMenu && (error == .noValue || error == .attributeUnsupported || error == .cannotComplete) { return [] }
-        guard error == .success else { throw self.fail("children-count", Int(error.rawValue)) }
-        guard count >= 0, count <= 64 else { throw self.fail("children-budget") }
-        if count == 0 { return [] }
-        try self.checkBudget(node)
-        self.mark("children-values")
-        var values: CFArray?
-        var read = AXUIElementCopyAttributeValues(node, kAXChildrenAttribute as CFString, 0, count, &values)
-        if allowPendingMenu && read == .cannotComplete { return [] }
-        if read == .cannotComplete {
+        while true {
             try self.checkBudget(node)
-            self.mark("children-recount")
-            var revised: CFIndex = 0
-            let recount = AXUIElementGetAttributeValueCount(node, kAXChildrenAttribute as CFString, &revised)
-            if recount == .success, revised != count {
-                guard revised >= 0, revised <= 64 else { throw self.fail("children-budget") }
-                if revised == 0 { return [] }
-                count = revised
-                values = nil
-                try self.checkBudget(node)
-                self.mark("children-values-after-count-change")
-                read = AXUIElementCopyAttributeValues(node, kAXChildrenAttribute as CFString, 0, count, &values)
-            }
+            self.mark("children-count")
+            var count: CFIndex = 0
+            let error = AXUIElementGetAttributeValueCount(node, kAXChildrenAttribute as CFString, &count)
+            if error == .cannotComplete { Thread.sleep(forTimeInterval: 0.005); continue }
+            if allowPendingMenu && (error == .noValue || error == .attributeUnsupported) { return [] }
+            guard error == .success else { throw self.fail("children-count", Int(error.rawValue)) }
+            guard count >= 0, count <= 64 else { throw self.fail("children-budget") }
+            if count == 0 { return [] }
+            try self.checkBudget(node)
+            self.mark("children-values")
+            var values: CFArray?
+            let read = AXUIElementCopyAttributeValues(node, kAXChildrenAttribute as CFString, 0, count, &values)
+            // SwiftUI can replace children between count and values; obtain a fresh bounded count.
+            if read == .cannotComplete { Thread.sleep(forTimeInterval: 0.005); continue }
+            guard read == .success, let elements = values as? [AXUIElement], elements.count == count
+            else { throw self.fail("children-values", Int(read.rawValue)) }
+            return elements
         }
-        guard read == .success, let elements = values as? [AXUIElement], elements.count == count
-        else { throw self.fail("children-values", Int(read.rawValue)) }
-        return elements
     }
     func focusedWindow() throws -> AXUIElement {
         guard try self.role(self.app) == kAXApplicationRole,
@@ -190,21 +182,24 @@ final class TargetedMenuProbe {
         return buttons[0]
     }
     func actions(_ node: AXUIElement) throws -> [String] {
-        try self.checkBudget(node)
-        self.mark("action-names")
-        var names: CFArray?
-        let error = AXUIElementCopyActionNames(node, &names)
-        guard error == .success, let names = names as? [String] else { throw self.fail("action-names", Int(error.rawValue)) }
-        return names
+        while true {
+            try self.checkBudget(node)
+            self.mark("action-names")
+            var names: CFArray?
+            let error = AXUIElementCopyActionNames(node, &names)
+            if error == .cannotComplete { Thread.sleep(forTimeInterval: 0.005); continue }
+            guard error == .success, let names = names as? [String] else { throw self.fail("action-names", Int(error.rawValue)) }
+            return names
+        }
     }
     @discardableResult
     func perform(_ node: AXUIElement, _ action: String) throws
         -> (pressedAt: Int64, pressedUptimeMs: Double, returnedAt: Int64, returnedUptimeMs: Double)
     {
-        try self.requireOwner() // Check the live owned app immediately before an effect.
         guard try self.actions(node).contains(action) else { throw self.fail("unsupported-action") }
         try self.checkBudget(node)
         self.mark("perform:" + action)
+        try self.requireOwner() // Recheck after potentially busy read-only action discovery.
         let pressedAt = Int64(Date().timeIntervalSince1970 * 1000)
         let pressedUptimeMs = Double(DispatchTime.now().uptimeNanoseconds) / 1_000_000
         let error = AXUIElementPerformAction(node, action as CFString)

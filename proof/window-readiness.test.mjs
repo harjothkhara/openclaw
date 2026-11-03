@@ -47,3 +47,12 @@ test("observed transient help read admits a fresh read-only startup probe", () =
   ]) assert.equal(transientProbeRead(trace(read, failure), 42), false);
   assert.equal(transientProbeRead("not-json", 42), false);
 });
+
+test("read-only child traversal busy errors and exhausted read budget permit startup re-probe", () => {
+  const read = { pid: 42, stage: "children-values", visited: 10 };
+  for (const failure of [
+    { ...helpFailure, domain: "TargetedMenu.children-values" },
+    { ...helpFailure, domain: "TargetedMenu.deadline", code: 1 },
+  ]) assert.equal(transientProbeRead(trace(read, failure), 42), true);
+  assert.equal(transientProbeRead(trace(read, { ...helpFailure, domain: "TargetedMenu.node-budget", code: 1 }), 42), false);
+});

@@ -21,11 +21,13 @@ export function transientProbeRead(stderr, pid) {
   try { stages = stderr.trim().split("\n").map((line) => JSON.parse(line)); }
   catch { return false; }
   const failure = stages.at(-1), read = stages.at(-2);
-  return failure?.kind === "targeted-native-ax-error" && failure.code === -25204 &&
-    read?.pid === pid && (
-      (failure.domain === "TargetedMenu.read:AXRole" && read.stage === "read:AXRole" && read.visited === 0) ||
-      (failure.domain === "TargetedMenu.read:AXHelp" && read.stage === "read:AXHelp" && read.visited > 0)
-    );
+  const readStage = read?.stage?.startsWith("read:") || read?.stage?.startsWith("children-");
+  const busyRead = failure?.code === -25204 &&
+    (failure.domain?.startsWith("TargetedMenu.read:") ||
+      ["TargetedMenu.children-count", "TargetedMenu.children-values"].includes(failure.domain));
+  const deadline = failure?.code === 1 && failure.domain === "TargetedMenu.deadline";
+  return failure?.kind === "targeted-native-ax-error" && read?.pid === pid &&
+    readStage && (busyRead || deadline);
 }
 
 export function observedResponse(request, frame) {

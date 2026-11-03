@@ -224,3 +224,17 @@ found no New Thread callback before the immediate subsequent copy. Qualification
 now waits up to10s for the independent fixture new-action receipt before opening
 another menu, matching the product driver's post-press correlation interval.
 No menu action is retried and the fixture must still record exactly one new.
+
+Run 41538014027 built the exact PR package successfully but failed the read-only
+startup probe at AXChildren values cannotComplete after one root retry. No New
+Thread ran. All AX value/count/children reads now handle cannotComplete at the
+single read boundary, within the unchanged3s total operation budget. Fresh child
+counts are bounded64 on every retry. Read-only startup probes exhausted on read
+work may retry within the existing90s admission window after owned-window checks;
+all effect operations remain single attempts and other errors remain fatal.
+
+The uncached exact-head package build took72m in that run. The overall job budget
+is now180m so both package builds and shared tests can finish without losing
+evidence at the former120m job cap. Per-operation/UI/cleanup budgets are unchanged.
+Action-name discovery uses the same bounded read retry, with live owned-app
+validation moved after discovery immediately before the one AX action.
