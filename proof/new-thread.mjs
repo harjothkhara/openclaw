@@ -709,9 +709,9 @@ async function main() {
       JSON.parse(
         await run(
           "rpc-" + method,
-          [...cli(method), "--params", JSON.stringify(params || {})],
+          [...cli(method), "--timeout", "60000", "--params", JSON.stringify(params || {})],
           gwEnv,
-          20000,
+          90000,
         ),
       );
     gateway = start(

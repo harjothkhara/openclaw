@@ -249,3 +249,9 @@ before the native connection/observation starts. No runtime store is edited and
 no native request is substituted. Both real-app arms use the same setup; the
 native action must still create a genuinely new durable ID while preserving this
 baseline. Empty-profile parent selection is unchanged and is not claimed fixed.
+
+Run41707303411 timed out while creating the existing parent before native launch.
+CLI startup consumed most of the20s process cap; cleanup then stopped the Gateway
+while creation was active. Public setup RPCs now allow60s request time and90s
+process time, including CLI startup. Native input, memory, stability, and cleanup
+limits remain unchanged. Failed setup remains incomplete.
