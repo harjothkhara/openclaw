@@ -23,10 +23,11 @@ jobs:
           repository: openclaw/openclaw
           ref: ${{ env.TARGET_SHA }}
           persist-credentials: false
-      - name: Set up supported Node
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+      - name: Set up native protocol generator dependencies
+        uses: ./.github/actions/setup-node-env
         with:
           node-version: 24.22.1
+          install-bun: "false"
       - name: Record exact source and toolchain
         shell: bash
         run: |
