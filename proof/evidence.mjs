@@ -27,6 +27,7 @@ export function requiredArtifacts(mode) {
     "commands.json",
     "gateway-startup.json",
     "gateway-config-validation.json",
+    "setup-parent.json",
     "window-before-ax.png",
     "window-last.json",
     "before-ax.json",

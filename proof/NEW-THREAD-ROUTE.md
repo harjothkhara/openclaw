@@ -238,3 +238,14 @@ is now180m so both package builds and shared tests can finish without losing
 evidence at the former120m job cap. Per-operation/UI/cleanup budgets are unchanged.
 Action-name discovery uses the same bounded read retry, with live owned-app
 validation moved after discovery immediately before the one AX action.
+
+Run41563194807 reached the actual native New Thread action and one sessions.create
+RPC with bounded memory, but the fresh fixture had no durable main conversation;
+the Gateway rejected its parent with INVALID_REQUEST unknown parent session.
+The linked issue186215 explicitly reports an existing configured installation.
+Setup now creates agent:main:main via the real public Gateway API, requires no
+model run and a matching durable inventory row, and retains setup-parent.json
+before the native connection/observation starts. No runtime store is edited and
+no native request is substituted. Both real-app arms use the same setup; the
+native action must still create a genuinely new durable ID while preserving this
+baseline. Empty-profile parent selection is unchanged and is not claimed fixed.

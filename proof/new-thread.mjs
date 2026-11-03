@@ -753,6 +753,22 @@ async function main() {
       await sleep(500);
     }
     assert.ok(ready, "Gateway readiness missing");
+    // The reported flow starts from an existing conversation. An empty profile's
+    // default main key is not durable yet and cannot be used as a creation parent.
+    const parent = await call("sessions.create", { key: "agent:main:main", agentId: "main" });
+    assert.equal(parent.ok, true, "Baseline conversation creation failed");
+    assert.equal(parent.key, "agent:main:main");
+    assert.ok(typeof parent.sessionId === "string" && parent.sessionId.length > 0);
+    assert.equal(parent.runStarted, false, "Baseline setup must not invoke a model");
+    const parentInventory = requireInventory(await call("sessions.list", {
+      limit: 200, archived: "all", includeGlobal: true, includeUnknown: true,
+    }));
+    assert.ok(parentInventory.sessions.some(row =>
+      row.key === parent.key && row.sessionId === parent.sessionId), "Baseline parent is not durable");
+    await save("setup-parent.json", {
+      kind: "existing-conversation-setup-not-native-proof",
+      key: parent.key, sessionId: parent.sessionId, runStarted: parent.runStarted,
+    });
     const { WebSocket, WebSocketServer } = createRequire(path.join(source, "package.json"))("ws");
     relay = new WebSocketServer({ host: "127.0.0.1", port: 0 });
     await new Promise((resolve, reject) => {
