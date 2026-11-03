@@ -1,0 +1,57 @@
+name: PR 186259 shared session tests
+on:
+  workflow_dispatch:
+  push:
+    branches: [proof/mac-new-thread-186215-2026-10-27]
+    paths: [.github/workflows/mac-new-thread-shared-tests.yml]
+permissions:
+  contents: read
+concurrency:
+  group: pr-186259-shared-session-tests
+  cancel-in-progress: false
+jobs:
+  shared-session-tests:
+    if: github.repository == 'harjothkhara/openclaw'
+    runs-on: macos-26-intel
+    timeout-minutes: 35
+    env:
+      TARGET_SHA: 2b916adf3896eb18fb11d7702c9dd203fa1aaecf
+    steps:
+      - name: Check out exact product head
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: openclaw/openclaw
+          ref: ${{ env.TARGET_SHA }}
+          persist-credentials: false
+      - name: Set up supported Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 24.22.1
+      - name: Record exact source and toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/session-test-evidence"
+          test "$(git rev-parse HEAD)" = "$TARGET_SHA"
+          {
+            git rev-parse HEAD
+            xcodebuild -version
+            swift --version
+            node --version
+          } | tee "$RUNNER_TEMP/session-test-evidence/source-and-toolchain.log"
+      - name: Run shared session creation suites
+        shell: bash
+        run: |
+          set -euo pipefail
+          swift test --package-path apps/shared/OpenClawKit \
+            --scratch-path "$RUNNER_TEMP/session-test-build" \
+            --disable-index-store -Xswiftc -gline-tables-only --no-parallel \
+            --filter 'ChatViewModelSessionActionTests|ChatGatewayTransportTests|ChatGatewayRequestTests' \
+            2>&1 | tee "$RUNNER_TEMP/session-test-evidence/shared-consumer-tests.log"
+      - name: Upload test evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: pr-186259-shared-session-tests-${{ github.run_id }}
+          path: ${{ runner.temp }}/session-test-evidence
+          if-no-files-found: error
