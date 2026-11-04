@@ -1,6 +1,12 @@
 name: PR 185024 real Mac settings proof
 on:
   workflow_dispatch:
+    inputs:
+      proof_lane:
+        description: Reuse the completed owner proof unless it changed
+        type: choice
+        options: [mac, all]
+        default: mac
 permissions:
   contents: read
   actions: read
@@ -91,7 +97,8 @@ jobs:
           retention-days: 14
 
   owner-red-green:
-    if: github.repository == 'harjothkhara/openclaw'
+    # Same immutable owner/test sources passed in run41783792154/job126421154394.
+    if: github.repository == 'harjothkhara/openclaw' && inputs.proof_lane == 'all'
     runs-on: macos-26-intel
     timeout-minutes: 10
     steps:

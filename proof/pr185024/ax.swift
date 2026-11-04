@@ -75,6 +75,26 @@ if args.count == 2, args[1] == "fixture" {
             try emit(["pid": pid, "action": "close-welcome"])
             exit(0)
         }
+        if args[1] == "keep-focused-settings" {
+            guard !fixture, windows.count == 2,
+                  let focused = try read(app, kAXFocusedWindowAttribute),
+                  windows.filter({ CFEqual($0, focused) }).count == 1
+            else { try fail("Expected two owned windows and one focused window") }
+            for window in windows {
+                guard try read(window, kAXTitleAttribute) as? String == "OpenClaw" else {
+                    try fail("Do not dismiss an unexpected owned window")
+                }
+            }
+            // Two Dashboard windows can survive normal startup/settings navigation.
+            // Close only the unfocused duplicate using its standard window control.
+            for window in windows where !CFEqual(window, focused) {
+                guard let button = try read(window, kAXCloseButtonAttribute),
+                      AXUIElementPerformAction(button as! AXUIElement, kAXPressAction as CFString) == .success
+                else { try fail("Duplicate Dashboard refused its close control") }
+            }
+            try emit(["pid": pid, "closedUnfocusedDashboardWindows": 1])
+            exit(0)
+        }
         let start = DispatchTime.now().uptimeNanoseconds
         var nodes = 0
         var rows: [[String: Any]] = []

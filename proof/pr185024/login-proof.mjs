@@ -127,9 +127,14 @@ async function configureAndLaunch(stage) {
   ax("settings");
   // Closing Welcome can leave a menu-bar app with no windows. Open Settings
   // first, then verify both dismissal and navigation in the resulting window.
-  await waitFor(`${stage}-settings-navigation`, s =>
+  const navigation = await waitFor(`${stage}-settings-navigation`, s =>
     (stage !== "released" || !s.rows.some(r => r.role === "AXWindow" && r.title === "Welcome to OpenClaw")) &&
     s.rows.some(r => r.role === "AXLink" && (r.title === "This Mac" || r.description === "This Mac")));
+  if (navigation.rows.filter(r => r.role === "AXWindow").length > 1) {
+    save(`${stage}-close-duplicate-window.json`, ax("keep-focused-settings"));
+    await waitFor(`${stage}-single-settings-window`, s => s.rows.filter(r => r.role === "AXWindow").length === 1 &&
+      s.rows.some(r => r.role === "AXLink" && (r.title === "This Mac" || r.description === "This Mac")));
+  }
   ax("press", "This Mac", "AXLink");
   return waitFor(`${stage}-native-login-switch`, s => {
     try { return loginRow(s).enabled === true; } catch { return false; }
