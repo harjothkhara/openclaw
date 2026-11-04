@@ -34,6 +34,7 @@ const children = [];
 let app;
 let acquiredLabel = false;
 let installedApp = false;
+let uiStage = { name: mode === "upgrade" ? "released" : "fresh", welcome: "unseen" };
 const report = { mode, targetSha: "41ab84afa79f8d008bae12d11f4009f3453b8647", steps: [], success: false };
 const save = (name, data) => fs.writeFileSync(path.join(evidence, name), JSON.stringify(data, null, 2));
 const hash = (file) => createHash("sha256").update(fs.readFileSync(file)).digest("hex");
@@ -76,7 +77,18 @@ async function waitFor(name, predicate) {
     assert.equal(app?.exitCode ?? null, null, "Actual app exited");
     try {
       state = snapshot();
-      if (predicate(state)) { save(`${name}.json`, state); report.steps.push(name); return state; }
+      const welcome = state.rows.some(r => r.role === "AXWindow" && r.title === "Welcome to OpenClaw");
+      if (welcome) {
+        assert.notEqual(uiStage.welcome, "dismissed", "Welcome unexpectedly reopened after dismissal");
+        if (uiStage.welcome === "unseen") {
+          save(`${uiStage.name}-welcome-observed.json`, state);
+          save(`${uiStage.name}-welcome-dismiss-action.json`, ax("close-welcome"));
+          uiStage.welcome = "closing";
+        }
+      } else {
+        if (uiStage.welcome === "closing") uiStage.welcome = "dismissed";
+        if (predicate(state)) { save(`${name}.json`, state); report.steps.push(name); return state; }
+      }
     } catch (error) {
       // A document can retire an AX element mid-sample. Retry only those native
       // transient statuses, within the same deadline; budget/identity failures stop.
@@ -97,12 +109,14 @@ function capture(name, state) {
   run("/usr/sbin/screencapture", ["-x", "-l", String(state.captureWindowId), path.join(evidence, `${name}.png`)]);
 }
 async function configureAndLaunch(stage) {
+  uiStage = { name: stage, welcome: "unseen" };
   const installedVersion = run("/usr/libexec/PlistBuddy", ["-c", "Print :CFBundleShortVersionString", path.join(appPath, "Contents/Info.plist")]).trim();
   save(`${stage}-installed-bundle.json`, { path: appPath, version: installedVersion });
   if (stage === "released") assert.equal(installedVersion, "2026.10.10");
   const mac = path.join(appPath, "Contents/MacOS/openclaw-mac");
   run(mac, ["configure-remote", "--direct-url", "ws://127.0.0.1:28154", "--local-port", "28154", "--remote-port", "28154", "--token-file", tokenFile, "--json"], { env: appEnv });
-  app = start(path.join(appPath, "Contents/MacOS/OpenClaw"), ["--dashboard", "--attach-only"], appEnv, `app-${report.steps.length}`);
+  // Start the normal menu-bar app; CmdComma is the sole Dashboard opening request.
+  app = start(path.join(appPath, "Contents/MacOS/OpenClaw"), ["--attach-only"], appEnv, `app-${report.steps.length}`);
   const until = Date.now() + 90_000;
   let connected = false;
   do {
@@ -116,29 +130,29 @@ async function configureAndLaunch(stage) {
     if (!connected) await delay(500);
   } while (!connected && Date.now() < until);
   assert.ok(connected, "Actual app did not connect to its real loopback Gateway");
-  if (stage === "released") {
-    // Dismiss first-run setup with its normal window close control. Completing
-    // AI onboarding would require unrelated model credentials; preserve remote config.
-    const welcome = await waitFor("released-welcome", s => s.rows.some(r =>
-      r.role === "AXWindow" && r.title === "Welcome to OpenClaw"));
-    capture("released-welcome", welcome);
-    save("released-welcome-dismiss-action.json", ax("close-welcome"));
-  }
   ax("settings");
-  // Closing Welcome can leave a menu-bar app with no windows. Open Settings
-  // first, then verify both dismissal and navigation in the resulting window.
-  const navigation = await waitFor(`${stage}-settings-navigation`, s =>
-    (stage !== "released" || !s.rows.some(r => r.role === "AXWindow" && r.title === "Welcome to OpenClaw")) &&
-    s.rows.some(r => r.role === "AXLink" && (r.title === "This Mac" || r.description === "This Mac")));
-  if (navigation.rows.filter(r => r.role === "AXWindow").length > 1) {
-    save(`${stage}-close-duplicate-window.json`, ax("keep-focused-settings"));
-    await waitFor(`${stage}-single-settings-window`, s => s.rows.filter(r => r.role === "AXWindow").length === 1 &&
-      s.rows.some(r => r.role === "AXLink" && (r.title === "This Mac" || r.description === "This Mac")));
-  }
-  ax("press", "This Mac", "AXLink");
-  return waitFor(`${stage}-native-login-switch`, s => {
-    try { return loginRow(s).enabled === true; } catch { return false; }
+  const settingsAttempt = { number: 0, duplicateClosed: false };
+  await waitFor(`${stage}-appearance-ready`, s => {
+    if (s.rows.filter(r => r.role === "AXWindow").length > 1) {
+      if (!settingsAttempt.duplicateClosed) {
+        save(`${stage}-close-duplicate-window-${settingsAttempt.number}.json`, ax("keep-focused-settings"));
+        settingsAttempt.duplicateClosed = true;
+      }
+      return false;
+    }
+    if (settingsAttempt.number === 0 && s.rows.some(r =>
+      r.role === "AXStaticText" && r.text === "Dashboard unavailable")) {
+      save(`${stage}-settings-retry.json`, ax("settings"));
+      settingsAttempt.number = 1;
+      settingsAttempt.duplicateClosed = false;
+      return false;
+    }
+    // A sidebar link can predate a pending navigation; this page-specific
+    // control proves the requested Appearance destination actually rendered.
+    return s.rows.some(r => r.role === "AXStaticText" && r.text === "Color mode");
   });
+  ax("press", "This Mac", "AXLink");
+  return waitFor(`${stage}-native-login-switch`, s => loginRow(s).enabled === true);
 }
 function pressLogin(state) {
   return ax("press", "Launch at login", loginRow(state).role);
@@ -156,7 +170,7 @@ async function settledEnable(name) {
   // Bootstrap makes the job visible before kickstart/final print complete.
   // Each remaining owner command has a five-second bound; observe again after both.
   await delay(12_000);
-  const state = snapshot();
+  const state = await waitFor(`${name}-settled-ui`, s => loginRow(s).enabled === true);
   save(`${name}-settled-observation.json`, state);
   capture(`${name}-settled-observation`, state);
   assert.equal(Number(loginRow(state).value), 1);
@@ -221,7 +235,7 @@ try {
     // The base owner has four sequential commands, each bounded to five seconds.
     // Wait beyond all four before observing its final false-success state.
     await delay(22_000);
-    state = snapshot();
+    state = await waitFor("before-failure-settled-ui", s => loginRow(s).enabled === true);
     save("before-failure-observation.json", state);
     capture("before-failure-observation", state);
     assert.equal(Number(loginRow(state).value), 1);
@@ -248,7 +262,7 @@ try {
     state = await configureAndLaunch("upgraded");
     state = await waitFor("upgrade-existing-login-hydrated", s => Number(loginRow(s).value) === 1);
     await delay(1500);
-    state = snapshot();
+    state = await waitFor("upgrade-existing-login-settled-ui", s => loginRow(s).enabled === true);
     assert.equal(hash(plist), report.releasedPlistSha256, "Upgrade/startup rewrote the existing login plist");
     assert.equal(Number(loginRow(state).value), 1, "Upgraded app did not hydrate the existing login choice");
     report.upgradedPlistSha256 = hash(plist);

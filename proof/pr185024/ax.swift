@@ -11,7 +11,7 @@ func emit(_ result: [String: Any]) throws {
     print(String(decoding: data, as: UTF8.self))
 }
 func read(_ element: AXUIElement, _ key: String) throws -> CFTypeRef? {
-    AXUIElementSetMessagingTimeout(element, 0.75)
+    AXUIElementSetMessagingTimeout(element, 2)
     var result: CFTypeRef?
     let status = AXUIElementCopyAttributeValue(element, key as CFString, &result)
     if status == .attributeUnsupported || status == .noValue { return nil }
@@ -45,7 +45,7 @@ if args.count == 2, args[1] == "fixture" {
         guard executable == expected else { try fail("Target is not the task-owned executable") }
         guard AXIsProcessTrusted() else { try fail("Accessibility unavailable; do not bypass TCC") }
         let app = AXUIElementCreateApplication(pid)
-        AXUIElementSetMessagingTimeout(app, 0.75)
+        AXUIElementSetMessagingTimeout(app, 2)
         if args[1] == "settings" {
             guard !fixture, running.activate(options: [.activateIgnoringOtherApps]) else {
                 try fail("Could not activate owned app")
