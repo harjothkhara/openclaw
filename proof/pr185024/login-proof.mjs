@@ -83,7 +83,8 @@ async function waitFor(name, predicate) {
       const staleElement = /AX read failed: .*?,\s*-2520[24]/.test(String(error.stderr));
       const changingSwitch = error.code === "ERR_ASSERTION" &&
         error.message.startsWith("Expected one real Launch at login switch");
-      if (!staleElement && !changingSwitch) throw error;
+      const openingWindow = /Owned app has no windows error 1/.test(String(error.stderr));
+      if (!staleElement && !changingSwitch && !openingWindow) throw error;
       lastTransientError = String(error.stderr ?? error.message);
     }
     await delay(500);
@@ -112,6 +113,7 @@ async function configureAndLaunch(stage) {
     if (!connected) await delay(500);
   } while (!connected && Date.now() < until);
   assert.ok(connected, "Actual app did not connect to its real loopback Gateway");
+  await waitFor(`${stage}-app-window`, s => s.windowIds.length > 0);
   ax("settings");
   await waitFor(`${stage}-settings-navigation`, s => s.rows.some(r => r.role === "AXLink" && (r.title === "This Mac" || r.description === "This Mac")));
   ax("press", "This Mac", "AXLink");
@@ -136,6 +138,8 @@ async function settledEnable(name) {
   // Each remaining owner command has a five-second bound; observe again after both.
   await delay(12_000);
   const state = snapshot();
+  save(`${name}-settled-observation.json`, state);
+  capture(`${name}-settled-observation`, state);
   assert.equal(Number(loginRow(state).value), 1);
   assert.ok(!/Login Items/.test(stateText(state)));
   assert.ok(fs.existsSync(plist) && launchdLoaded());
