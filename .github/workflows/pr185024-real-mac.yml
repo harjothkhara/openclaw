@@ -1,0 +1,93 @@
+name: PR 185024 real Mac settings proof
+on:
+  push:
+    branches: [codex/pr185024-validation]
+    paths:
+      - .github/workflows/pr185024-real-mac.yml
+      - proof/pr185024/**
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+  checks: read
+env:
+  TARGET_SHA: 511d29078844175382e98b7fa3701b96e10ad75f
+jobs:
+  await-validation-and-app:
+    if: github.repository == 'harjothkhara/openclaw'
+    runs-on: ubuntu-latest
+    timeout-minutes: 85
+    steps:
+      - name: Require completed exact-head tests and app packaging
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh run watch 41751215880 --repo harjothkhara/openclaw --interval 30 --exit-status --compact
+          gh run watch 41752041299 --repo harjothkhara/openclaw --interval 30 --exit-status --compact
+  real-settings:
+    needs: await-validation-and-app
+    if: github.repository == 'harjothkhara/openclaw'
+    runs-on: macos-26-intel
+    timeout-minutes: 22
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [fresh, upgrade]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          sparse-checkout: proof/pr185024
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 24.22.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          name: pr185024-exact-head-app
+          run-id: 41752041299
+          github-token: ${{ github.token }}
+          path: app-artifact
+      - name: Verify and extract the exact-head actual app
+        shell: bash
+        run: |
+          set -euo pipefail
+          shasum -a 256 -c app-artifact/app-sha256.txt
+          test "$(head -1 app-artifact/source-toolchain.txt)" = "$TARGET_SHA"
+          mkdir candidate evidence
+          ditto -x -k app-artifact/OpenClaw.zip candidate
+          codesign --verify --deep --strict candidate/OpenClaw.app
+          test "$(/usr/libexec/PlistBuddy -c 'Print :OpenClawGitCommit' candidate/OpenClaw.app/Contents/Info.plist)" = "$TARGET_SHA"
+          cp app-artifact/source-toolchain.txt evidence/
+          cp app-artifact/app-sha256.txt evidence/
+          { echo "Workflow $GITHUB_SHA"; sw_vers; xcodebuild -version; } > evidence/proof-host.txt
+      - name: Retrieve the official installed upgrade baseline
+        if: matrix.mode == 'upgrade'
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --location --max-time 180 https://github.com/openclaw/openclaw/releases/download/v2026.10.9/OpenClaw-2026.10.9-x86_64.zip --output "$RUNNER_TEMP/released-app.zip"
+          echo "f14ac878b208de1b266fae6f372c69ca576594feede422f2997f7453ef2ca988  $RUNNER_TEMP/released-app.zip" | shasum -a 256 -c -
+          mkdir released
+          ditto -x -k "$RUNNER_TEMP/released-app.zip" released
+          codesign --verify --deep --strict released/OpenClaw.app
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' released/OpenClaw.app/Contents/Info.plist > evidence/released-version.txt
+          grep '^2026\.10\.9' evidence/released-version.txt
+      - name: Compile task-owned input observer
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --check proof/pr185024/login-proof.mjs
+          xcrun swiftc proof/pr185024/ax.swift -o "$RUNNER_TEMP/pr185024-ax"
+          echo "LOGIN_AX_HELPER=$RUNNER_TEMP/pr185024-ax" >> "$GITHUB_ENV"
+      - name: Exercise actual native settings and real launchctl
+        env:
+          LOGIN_PROOF_MODE: ${{ matrix.mode }}
+          RUNNER_ENVIRONMENT: ${{ runner.environment }}
+        run: node proof/pr185024/login-proof.mjs
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: always()
+        with:
+          name: pr185024-real-mac-${{ matrix.mode }}
+          path: evidence/
+          retention-days: 14
