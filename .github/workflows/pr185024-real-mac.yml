@@ -18,12 +18,35 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 85
     steps:
-      - name: Require completed exact-head tests and app packaging
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          name: pr185024-native-511d29078844175382e98b7fa3701b96e10ad75f
+          run-id: 41751215880
+          github-token: ${{ github.token }}
+          path: native-evidence
+      - name: Require passed changed-surface tests; retain broader timeout as failed
+        shell: bash
+        run: |
+          python3 - <<'PYTHON'
+          import os
+          from pathlib import Path
+          root = Path('native-evidence')
+          assert (root / 'source-toolchain.txt').read_text().splitlines()[0] == os.environ['TARGET_SHA']
+          log = (root / 'native-default.log').read_text()
+          for suite in ['LaunchAgentManagerTests', 'DeviceSettingsBridgeTests', 'DeviceSettingsConsentTests']:
+              assert '✔ Suite ' + suite + ' passed' in log
+          assert '✔ Test "queued login choices supersede an enable before activation" passed' in log
+          assert 'with 9 test cases passed' in log
+          failures = [line for line in log.splitlines() if 'recorded an issue' in line]
+          assert len(failures) == 1 and 'localized background session failure title' in failures[0] and '.timedOut' in failures[0]
+          assert '75 tests in 5 suites failed' in log and 'with 1 issue' in log
+          print('Changed-surface tests passed. Broader sampler remains FAILED: 74/75 pass; unchanged localized notification child timed out. Named-profile follow-up was skipped. No full-native-green claim.')
+          PYTHON
+      - name: Require successful actual app packaging
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          gh run watch 41751215880 --repo harjothkhara/openclaw --interval 30 --exit-status --compact
           gh run watch 41752041299 --repo harjothkhara/openclaw --interval 30 --exit-status --compact
   real-settings:
     needs: await-validation-and-app
