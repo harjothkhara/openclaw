@@ -97,6 +97,9 @@ function capture(name, state) {
   run("/usr/sbin/screencapture", ["-x", "-l", String(state.captureWindowId), path.join(evidence, `${name}.png`)]);
 }
 async function configureAndLaunch(stage) {
+  const installedVersion = run("/usr/libexec/PlistBuddy", ["-c", "Print :CFBundleShortVersionString", path.join(appPath, "Contents/Info.plist")]).trim();
+  save(`${stage}-installed-bundle.json`, { path: appPath, version: installedVersion });
+  if (stage === "released") assert.equal(installedVersion, "2026.10.10");
   const mac = path.join(appPath, "Contents/MacOS/openclaw-mac");
   run(mac, ["configure-remote", "--direct-url", "ws://127.0.0.1:28154", "--local-port", "28154", "--remote-port", "28154", "--token-file", tokenFile, "--json"], { env: appEnv });
   app = start(path.join(appPath, "Contents/MacOS/OpenClaw"), ["--dashboard", "--attach-only"], appEnv, `app-${report.steps.length}`);
@@ -158,6 +161,22 @@ async function settledEnable(name) {
   report.steps.push(name);
   return state;
 }
+async function proveFailureRecovery(state, prefix) {
+  run("/bin/launchctl", ["disable", service]);
+  pressLogin(state);
+  state = await waitFor(`${prefix}-failure-reconciled`, s => Number(loginRow(s).value) === 0 &&
+    /Login Items/.test(stateText(s)) && !fs.existsSync(plist) && !launchdLoaded());
+  capture(`${prefix}-failure-reconciled`, state);
+  save(`${prefix}-regression.json`, { expected: "Off with recovery guidance and no plist/job", passed: true });
+  run("/bin/launchctl", ["enable", service]);
+  pressLogin(state);
+  state = await settledEnable(`${prefix}-retry-enabled`);
+  capture(`${prefix}-retry-enabled`, state);
+  pressLogin(state);
+  state = await waitFor(`${prefix}-disabled`, s => Number(loginRow(s).value) === 0 && !fs.existsSync(plist));
+  capture(`${prefix}-disabled`, state);
+  return state;
+}
 try {
   assert.ok(!fs.existsSync(appPath), "Do not replace a pre-existing app");
   assert.ok(!fs.existsSync(plist), "Do not touch a pre-existing login plist");
@@ -191,9 +210,32 @@ try {
   let state = await configureAndLaunch(mode === "upgrade" ? "released" : "fresh");
   assert.equal(Number(loginRow(state).value), 0);
   if (mode === "upgrade") {
+    run("/bin/launchctl", ["disable", service]);
+    pressLogin(state);
+    await waitFor("released-false-success-visible", s => Number(loginRow(s).value) === 1 && fs.existsSync(plist));
+    // The base owner has four sequential commands, each bounded to five seconds.
+    // Wait beyond all four before observing its final false-success state.
+    await delay(22_000);
+    state = snapshot();
+    save("before-failure-observation.json", state);
+    capture("before-failure-observation", state);
+    assert.equal(Number(loginRow(state).value), 1);
+    assert.ok(!/Login Items/.test(stateText(state)));
+    assert.ok(fs.existsSync(plist) && !launchdLoaded());
+    let bootstrapStatus;
+    try { run("/bin/launchctl", ["bootstrap", domain, plist]); bootstrapStatus = 0; }
+    catch (error) { bootstrapStatus = error.status; }
+    assert.equal(bootstrapStatus, 5, "The real disabled-label bootstrap must fail");
+    save("before-regression.json", { expected: "Off with recovery guidance and no plist/job", passed: false,
+      observed: "On without recovery guidance, plist present, job absent", bootstrapStatus });
+    report.steps.push("released-baseline-regression-reproduced");
+    run("/bin/launchctl", ["enable", service]);
+    pressLogin(state);
+    state = await waitFor("released-reset-off", s => Number(loginRow(s).value) === 0 && !fs.existsSync(plist));
     pressLogin(state);
     state = await settledEnable("released-login-enabled");
     report.releasedPlistSha256 = hash(plist);
+    fs.copyFileSync(plist, path.join(evidence, "released-login.plist"));
     capture("released-login-enabled", state);
     await stop(app);
     fs.rmSync(appPath, { recursive: true });
@@ -205,10 +247,18 @@ try {
     assert.equal(hash(plist), report.releasedPlistSha256, "Upgrade/startup rewrote the existing login plist");
     assert.equal(Number(loginRow(state).value), 1, "Upgraded app did not hydrate the existing login choice");
     report.upgradedPlistSha256 = hash(plist);
+    fs.copyFileSync(plist, path.join(evidence, "upgraded-login.plist"));
     capture("upgrade-existing-login-preserved", state);
     pressLogin(state);
     state = await waitFor("upgrade-disabled", s => Number(loginRow(s).value) === 0 && !fs.existsSync(plist));
     capture("upgrade-disabled", state);
+    // Off intentionally leaves the running job registered. Reset only this
+    // task-owned label so the matched comparison exercises bootstrap again.
+    run("/bin/launchctl", ["bootout", service]);
+    assert.equal(app.exitCode, null);
+    assert.ok(!launchdLoaded());
+    await proveFailureRecovery(state, "after");
+    report.beforeAfterRegression = { baseline: false, candidate: true };
   } else {
     capture("fresh-login-off", state);
     run("/bin/launchctl", ["disable", service]);

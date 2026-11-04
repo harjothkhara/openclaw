@@ -64,13 +64,13 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          curl --fail --location --max-time 180 https://github.com/openclaw/openclaw/releases/download/v2026.10.9/OpenClaw-2026.10.9-x86_64.zip --output "$RUNNER_TEMP/released-app.zip"
-          echo "f14ac878b208de1b266fae6f372c69ca576594feede422f2997f7453ef2ca988  $RUNNER_TEMP/released-app.zip" | shasum -a 256 -c -
+          curl --fail --location --max-time 180 https://github.com/openclaw/openclaw/releases/download/v2026.10.10/OpenClaw-2026.10.10-x86_64.zip --output "$RUNNER_TEMP/released-app.zip"
+          echo "e23def7d894d50bf003c5c6fbd76da9c1fb12db1a6d51291b7de6890cb6317ad  $RUNNER_TEMP/released-app.zip" | shasum -a 256 -c -
           mkdir released
           ditto -x -k "$RUNNER_TEMP/released-app.zip" released
           codesign --verify --deep --strict released/OpenClaw.app
           /usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' released/OpenClaw.app/Contents/Info.plist > evidence/released-version.txt
-          grep '^2026\.10\.9' evidence/released-version.txt
+          grep '^2026\.10\.10' evidence/released-version.txt
       - name: Compile task-owned input observer
         shell: bash
         run: |
@@ -87,5 +87,39 @@ jobs:
         if: always()
         with:
           name: pr185024-real-mac-${{ matrix.mode }}
+          path: evidence/
+          retention-days: 14
+
+  owner-red-green:
+    if: github.repository == 'harjothkhara/openclaw'
+    runs-on: macos-26-intel
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          sparse-checkout: proof/pr185024
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 24.22.1
+      - name: Verify immutable base and repaired owner source
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir owner-sources evidence
+          curl --fail --location --max-time 60 https://raw.githubusercontent.com/openclaw/openclaw/d168d352c20f17caf4f69d92f1d51341063b25c5/apps/macos/Sources/OpenClaw/LaunchAgentManager.swift --output owner-sources/base.swift
+          curl --fail --location --max-time 60 https://raw.githubusercontent.com/openclaw/openclaw/da572e8e03e71329b162eca217282db6f56e9cd0/apps/macos/Sources/OpenClaw/LaunchAgentManager.swift --output owner-sources/candidate.swift
+          curl --fail --location --max-time 60 https://raw.githubusercontent.com/openclaw/openclaw/v2026.10.10/apps/macos/Sources/OpenClaw/LaunchAgentManager.swift --output owner-sources/released.swift
+          test "$(git hash-object owner-sources/base.swift)" = 7f32910f9f02a7438c397228fd935f4ebf33d697
+          test "$(git hash-object owner-sources/candidate.swift)" = 73158f38919946f8cbaad3d2f5bef35e3d8f303c
+          cmp owner-sources/base.swift owner-sources/released.swift
+          printf '%s\n' 'base d168d352c20f17caf4f69d92f1d51341063b25c5 blob 7f32910f9f02a7438c397228fd935f4ebf33d697' 'candidate da572e8e03e71329b162eca217282db6f56e9cd0 blob 73158f38919946f8cbaad3d2f5bef35e3d8f303c' > evidence/owner-source-identity.txt
+          xcrun swift --version >> evidence/owner-source-identity.txt
+      - name: Same behavioral assertion fails on base and passes on repaired owner
+        run: node proof/pr185024/owner-red-green.mjs
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: always()
+        with:
+          name: pr185024-owner-red-green
           path: evidence/
           retention-days: 14
