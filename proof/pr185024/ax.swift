@@ -62,6 +62,19 @@ if args.count == 2, args[1] == "fixture" {
         }
         let windows = try read(app, kAXWindowsAttribute) as? [AXUIElement] ?? []
         guard !windows.isEmpty else { try fail("Owned app has no windows") }
+        if args[1] == "close-welcome" {
+            let welcome = try windows.filter {
+                try read($0, kAXTitleAttribute) as? String == "Welcome to OpenClaw"
+            }
+            guard !fixture, welcome.count == 1,
+                  let button = try read(welcome[0], kAXCloseButtonAttribute)
+            else { try fail("Expected one owned Welcome window with a close button") }
+            guard AXUIElementPerformAction(button as! AXUIElement, kAXPressAction as CFString) == .success else {
+                try fail("Welcome close button refused AXPress")
+            }
+            try emit(["pid": pid, "action": "close-welcome"])
+            exit(0)
+        }
         let start = DispatchTime.now().uptimeNanoseconds
         var nodes = 0
         var rows: [[String: Any]] = []

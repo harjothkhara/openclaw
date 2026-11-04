@@ -113,8 +113,20 @@ async function configureAndLaunch(stage) {
     if (!connected) await delay(500);
   } while (!connected && Date.now() < until);
   assert.ok(connected, "Actual app did not connect to its real loopback Gateway");
+  if (stage === "released") {
+    // Dismiss first-run setup with its normal window close control. Completing
+    // AI onboarding would require unrelated model credentials; preserve remote config.
+    const welcome = await waitFor("released-welcome", s => s.rows.some(r =>
+      r.role === "AXWindow" && r.title === "Welcome to OpenClaw"));
+    capture("released-welcome", welcome);
+    save("released-welcome-dismiss-action.json", ax("close-welcome"));
+  }
   ax("settings");
-  await waitFor(`${stage}-settings-navigation`, s => s.rows.some(r => r.role === "AXLink" && (r.title === "This Mac" || r.description === "This Mac")));
+  // Closing Welcome can leave a menu-bar app with no windows. Open Settings
+  // first, then verify both dismissal and navigation in the resulting window.
+  await waitFor(`${stage}-settings-navigation`, s =>
+    (stage !== "released" || !s.rows.some(r => r.role === "AXWindow" && r.title === "Welcome to OpenClaw")) &&
+    s.rows.some(r => r.role === "AXLink" && (r.title === "This Mac" || r.description === "This Mac")));
   ax("press", "This Mac", "AXLink");
   return waitFor(`${stage}-native-login-switch`, s => {
     try { return loginRow(s).enabled === true; } catch { return false; }

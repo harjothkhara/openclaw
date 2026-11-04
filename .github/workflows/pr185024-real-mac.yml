@@ -28,7 +28,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        mode: [fresh, upgrade]
+        # Fresh passed at the identical TARGET_SHA/app artifact in run 41767184219:
+        # https://github.com/harjothkhara/openclaw/actions/runs/41767184219/job/126390423979
+        # This follow-up completes only the installed-release replacement gap.
+        mode: [upgrade]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
