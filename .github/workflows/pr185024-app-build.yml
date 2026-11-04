@@ -1,0 +1,65 @@
+name: PR 185024 real Mac app build
+on:
+  push:
+    branches: [codex/pr185024-validation]
+    paths: [.github/workflows/pr185024-app-build.yml]
+permissions:
+  contents: read
+env:
+  TARGET_SHA: 511d29078844175382e98b7fa3701b96e10ad75f
+jobs:
+  app-build:
+    if: github.repository == 'harjothkhara/openclaw'
+    runs-on: macos-26-intel
+    timeout-minutes: 100
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: openclaw/openclaw
+          ref: ${{ env.TARGET_SHA }}
+          persist-credentials: false
+      - name: Verify exact source and supported toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$TARGET_SHA"
+          source scripts/lib/swift-toolchain.sh
+          select_xcode_toolchain
+          require_swift_toolchain
+          mkdir -p evidence
+          { git rev-parse HEAD; xcodebuild -version; swift --version; sw_vers; } > evidence/source-toolchain.txt
+      - uses: ./.github/actions/setup-node-env
+        with:
+          node-version: 24.22.1
+          install-bun: "true"
+      - name: Package actual debug app for launchd settings proof
+        shell: bash
+        env:
+          BUILD_CONFIG: debug
+          BUILD_ARCHS: x86_64
+          SKIP_PNPM_INSTALL: "1"
+          OPENCLAW_SKIP_MLX_TTS: "1"
+          SIGN_IDENTITY: "-"
+          ALLOW_ADHOC_SIGNING: "1"
+          SKIP_TEAM_ID_CHECK: "1"
+        run: |
+          set -euo pipefail
+          # Launchd settings only: no TCC permissions or release-signature claim.
+          bash scripts/package-mac-app.sh > evidence/package.log 2>&1
+          codesign --verify --deep --strict dist/OpenClaw.app
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' dist/OpenClaw.app/Contents/Info.plist > evidence/bundle-id.txt
+          mkdir -p app-artifact
+          ditto -c -k --sequesterRsrc --keepParent dist/OpenClaw.app app-artifact/OpenClaw.zip
+          cp evidence/source-toolchain.txt app-artifact/
+          shasum -a 256 app-artifact/OpenClaw.zip > evidence/app-sha256.txt
+          cp evidence/app-sha256.txt app-artifact/
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: pr185024-exact-head-app
+          path: app-artifact/
+          retention-days: 7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: always()
+        with:
+          name: pr185024-app-build-evidence
+          path: evidence/
