@@ -172,7 +172,7 @@ try {
   start(bun, [cli, "gateway", "run", "--bind", "loopback", "--port", "28154"], gatewayEnv, "gateway");
   // Installation and input use the same stable path as a normal app installation.
   installedApp = true;
-  run("/usr/bin/ditto", [mode === "upgrade" ? path.resolve("released/OpenClaw.app") : target, appPath]);
+  run("/usr/bin/ditto", [mode === "upgrade" ? path.resolve("released/OpenClaw.app") : target, appPath], { timeout: 180_000 });
   let state = await configureAndLaunch(mode === "upgrade" ? "released" : "fresh");
   assert.equal(Number(loginRow(state).value), 0);
   if (mode === "upgrade") {
@@ -182,7 +182,7 @@ try {
     capture("released-login-enabled", state);
     await stop(app);
     fs.rmSync(appPath, { recursive: true });
-    run("/usr/bin/ditto", [target, appPath]);
+    run("/usr/bin/ditto", [target, appPath], { timeout: 180_000 });
     state = await configureAndLaunch("upgraded");
     state = await waitFor("upgrade-existing-login-hydrated", s => Number(loginRow(s).value) === 1);
     await delay(1500);
