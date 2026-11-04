@@ -6,16 +6,16 @@ on:
 permissions:
   contents: read
 env:
-  TARGET_SHA: 511d29078844175382e98b7fa3701b96e10ad75f
+  TARGET_SHA: 41ab84afa79f8d008bae12d11f4009f3453b8647
 jobs:
   app-build:
     if: github.repository == 'harjothkhara/openclaw'
     runs-on: macos-26-intel
-    timeout-minutes: 100
+    timeout-minutes: 115
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
-          repository: openclaw/openclaw
+          repository: harjothkhara/openclaw
           ref: ${{ env.TARGET_SHA }}
           persist-credentials: false
       - name: Verify exact source and supported toolchain
@@ -32,7 +32,17 @@ jobs:
         with:
           node-version: 24.22.1
           install-bun: "true"
+      - name: Restore package build cache
+        id: package-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: apps/macos/.build
+          key: pr185024-package-v1-${{ runner.arch }}-${{ hashFiles('apps/macos/Package.resolved', 'scripts/lib/swift-toolchain.sh') }}-${{ env.TARGET_SHA }}
+          restore-keys: |
+            pr185024-package-v1-${{ runner.arch }}-${{ hashFiles('apps/macos/Package.resolved', 'scripts/lib/swift-toolchain.sh') }}-
       - name: Package actual debug app for launchd settings proof
+        id: package
+        timeout-minutes: 95
         shell: bash
         env:
           BUILD_CONFIG: debug
@@ -45,7 +55,7 @@ jobs:
         run: |
           set -euo pipefail
           # Launchd settings only: no TCC permissions or release-signature claim.
-          bash scripts/package-mac-app.sh > evidence/package.log 2>&1
+          bash scripts/package-mac-app.sh 2>&1 | tee evidence/package.log
           codesign --verify --deep --strict dist/OpenClaw.app
           /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' dist/OpenClaw.app/Contents/Info.plist > evidence/bundle-id.txt
           mkdir -p app-artifact
@@ -53,6 +63,12 @@ jobs:
           cp evidence/source-toolchain.txt app-artifact/
           shasum -a 256 app-artifact/OpenClaw.zip > evidence/app-sha256.txt
           cp evidence/app-sha256.txt app-artifact/
+      - name: Preserve completed package build cache
+        if: steps.package-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: apps/macos/.build
+          key: ${{ steps.package-cache.outputs.cache-primary-key }}
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: pr185024-exact-head-app

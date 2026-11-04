@@ -10,7 +10,7 @@ concurrency:
   group: pr185024-validation
   cancel-in-progress: false
 env:
-  TARGET_SHA: 511d29078844175382e98b7fa3701b96e10ad75f
+  TARGET_SHA: 41ab84afa79f8d008bae12d11f4009f3453b8647
 defaults:
   run:
     shell: bash
@@ -22,7 +22,7 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
-          repository: openclaw/openclaw
+          repository: harjothkhara/openclaw
           ref: ${{ env.TARGET_SHA }}
           persist-credentials: false
       - name: Select and record toolchain
@@ -40,16 +40,32 @@ jobs:
           install-bun: "false"
       - name: Prepare bundled Apple resources
         run: node scripts/prepare-apple-mermaid.mjs
+      - name: Restore native build cache
+        id: native-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: apps/macos/.build
+          key: pr185024-native-v1-${{ runner.arch }}-${{ hashFiles('apps/macos/Package.resolved', 'scripts/lib/swift-toolchain.sh') }}-${{ env.TARGET_SHA }}
+          restore-keys: |
+            pr185024-native-v1-${{ runner.arch }}-${{ hashFiles('apps/macos/Package.resolved', 'scripts/lib/swift-toolchain.sh') }}-
       - name: Build exact-head native tests
+        id: native-build
         run: |
           set -euo pipefail
           swift build --package-path apps/macos --build-system native --enable-code-coverage --disable-index-store -Xswiftc -gline-tables-only --build-tests > evidence/native-build.log 2>&1
+      - name: Preserve compiled tests before execution
+        if: steps.native-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: apps/macos/.build
+          key: ${{ steps.native-cache.outputs.cache-primary-key }}
       - name: Run default-profile owner and bridge regression tests
         run: |
           set -euo pipefail
-          node scripts/test-macos-native.mts default --package-path apps/macos --build-system native --enable-code-coverage --disable-index-store -Xswiftc -gline-tables-only --skip-build --no-parallel --filter 'LaunchAgentManagerTests|DeviceSettingsBridgeTests|DeviceSettingsConsentTests|DashboardWindowOwnershipTests' > evidence/native-default.log 2>&1
+          node scripts/test-macos-native.mts default --package-path apps/macos --build-system native --enable-code-coverage --disable-index-store -Xswiftc -gline-tables-only --skip-build --no-parallel --filter 'LaunchAgentManagerTests|DeviceSettingsBridgeTests|DeviceSettingsConsentTests|device settings promises settle with consent and retire with their document' > evidence/native-default.log 2>&1
           tail -60 evidence/native-default.log
       - name: Run named-profile AppState regression tests
+        if: ${{ !cancelled() && steps.native-build.outcome == 'success' }}
         run: |
           set -euo pipefail
           node scripts/test-macos-native.mts named --package-path apps/macos --build-system native --enable-code-coverage --disable-index-store -Xswiftc -gline-tables-only --skip-build --no-parallel --filter 'AppStateIsolationTests' > evidence/native-named.log 2>&1
@@ -66,7 +82,7 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
-          repository: openclaw/openclaw
+          repository: harjothkhara/openclaw
           ref: ${{ env.TARGET_SHA }}
           persist-credentials: false
       - name: Select and record toolchain

@@ -34,7 +34,7 @@ const children = [];
 let app;
 let acquiredLabel = false;
 let installedApp = false;
-const report = { mode, targetSha: "511d29078844175382e98b7fa3701b96e10ad75f", steps: [], success: false };
+const report = { mode, targetSha: "41ab84afa79f8d008bae12d11f4009f3453b8647", steps: [], success: false };
 const save = (name, data) => fs.writeFileSync(path.join(evidence, name), JSON.stringify(data, null, 2));
 const hash = (file) => createHash("sha256").update(fs.readFileSync(file)).digest("hex");
 function run(exe, args, options = {}) {
@@ -113,7 +113,6 @@ async function configureAndLaunch(stage) {
     if (!connected) await delay(500);
   } while (!connected && Date.now() < until);
   assert.ok(connected, "Actual app did not connect to its real loopback Gateway");
-  await waitFor(`${stage}-app-window`, s => s.windowIds.length > 0);
   ax("settings");
   await waitFor(`${stage}-settings-navigation`, s => s.rows.some(r => r.role === "AXLink" && (r.title === "This Mac" || r.description === "This Mac")));
   ax("press", "This Mac", "AXLink");

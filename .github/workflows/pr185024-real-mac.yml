@@ -1,17 +1,12 @@
 name: PR 185024 real Mac settings proof
 on:
-  push:
-    branches: [codex/pr185024-validation]
-    paths:
-      - .github/workflows/pr185024-real-mac.yml
-      - proof/pr185024/**
   workflow_dispatch:
 permissions:
   contents: read
   actions: read
   checks: read
 env:
-  TARGET_SHA: 511d29078844175382e98b7fa3701b96e10ad75f
+  TARGET_SHA: 41ab84afa79f8d008bae12d11f4009f3453b8647
 jobs:
   await-validation-and-app:
     if: github.repository == 'harjothkhara/openclaw'
@@ -20,7 +15,7 @@ jobs:
     steps:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         with:
-          name: pr185024-native-511d29078844175382e98b7fa3701b96e10ad75f
+          name: pr185024-native-41ab84afa79f8d008bae12d11f4009f3453b8647
           run-id: 41751215880
           github-token: ${{ github.token }}
           path: native-evidence
