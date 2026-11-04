@@ -1,0 +1,70 @@
+name: PR 185024 disposable Mac proof preflight
+on:
+  push:
+    branches: [codex/pr185024-validation]
+    paths: [.github/workflows/pr185024-mac-preflight.yml]
+permissions:
+  contents: read
+jobs:
+  preflight:
+    if: github.repository == 'harjothkhara/openclaw'
+    runs-on: macos-26-intel
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: harjothkhara/openclaw
+          ref: 13cde4984372bef34402ae61ff7891379626f260
+          sparse-checkout: proof/mac-accent-185529
+          persist-credentials: false
+      - name: Qualify desktop availability without changing privacy permissions
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir evidence
+          xcrun swiftc proof/mac-accent-185529/runner-probe.swift -o "$RUNNER_TEMP/login-desktop-probe"
+          "$RUNNER_TEMP/login-desktop-probe" state > evidence/desktop.json
+          python3 - <<'PY'
+          import json
+          d=json.load(open('evidence/desktop.json'))
+          print(d)
+          assert d['axTrusted'] is True, 'Desktop AX is unavailable; do not bypass TCC'
+          assert d['console']['state']=='unlocked'
+          assert d['display']['activeCount']>0 and not d['display']['mainAsleep']
+          PY
+      - name: Qualify a real launchctl failure fixture using a unique disposable job
+        shell: bash
+        run: |
+          set -euo pipefail
+          label="ai.openclaw.proof.${GITHUB_RUN_ID}"
+          domain="gui/$(id -u)"
+          plist="$RUNNER_TEMP/pr185024-launchctl.plist"
+          cleanup() {
+            /bin/launchctl bootout "$domain/$label" >/dev/null 2>&1 || true
+            /bin/launchctl enable "$domain/$label" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+          if /bin/launchctl print "$domain/$label" > evidence/initial-print.log 2>&1; then
+            echo 'Probe label unexpectedly exists'; exit 1
+          fi
+          cat > "$plist" <<EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0"><dict><key>Label</key><string>$label</string><key>ProgramArguments</key><array><string>/bin/sleep</string><string>300</string></array><key>RunAtLoad</key><true/></dict></plist>
+          EOF
+          /bin/launchctl disable "$domain/$label"
+          set +e
+          /bin/launchctl bootstrap "$domain" "$plist" > evidence/disabled-bootstrap.log 2>&1
+          disabled_status=$?
+          set -e
+          echo "$disabled_status" > evidence/disabled-bootstrap-status.txt
+          test "$disabled_status" -ne 0
+          /bin/launchctl enable "$domain/$label"
+          /bin/launchctl bootstrap "$domain" "$plist" > evidence/retry-bootstrap.log 2>&1
+          /bin/launchctl print "$domain/$label" > evidence/retry-print.log
+          echo 'Real disabled-job bootstrap failure and successful retry qualified.'
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: always()
+        with:
+          name: pr185024-mac-preflight
+          path: evidence/
