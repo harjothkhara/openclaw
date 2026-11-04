@@ -1,0 +1,110 @@
+name: PR 185024 exact-head validation
+on:
+  push:
+    branches: [codex/pr185024-validation]
+    paths: [.github/workflows/pr185024-validation.yml]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: pr185024-validation
+  cancel-in-progress: false
+env:
+  TARGET_SHA: 511d29078844175382e98b7fa3701b96e10ad75f
+defaults:
+  run:
+    shell: bash
+jobs:
+  native-tests:
+    if: github.repository == 'harjothkhara/openclaw'
+    runs-on: macos-26-intel
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: openclaw/openclaw
+          ref: ${{ env.TARGET_SHA }}
+          persist-credentials: false
+      - name: Select and record toolchain
+        run: |
+          set -euo pipefail
+          mkdir -p evidence
+          test "$(git rev-parse HEAD)" = "$TARGET_SHA"
+          source scripts/lib/swift-toolchain.sh
+          select_xcode_toolchain
+          require_swift_toolchain
+          { git rev-parse HEAD; xcodebuild -version; swift --version; sw_vers; } > evidence/source-toolchain.txt
+      - uses: ./.github/actions/setup-node-env
+        with:
+          node-version: 24.22.1
+          install-bun: "false"
+      - name: Prepare bundled Apple resources
+        run: node scripts/prepare-apple-mermaid.mjs
+      - name: Build exact-head native tests
+        run: |
+          set -euo pipefail
+          swift build --package-path apps/macos --build-system native --enable-code-coverage --disable-index-store -Xswiftc -gline-tables-only --build-tests > evidence/native-build.log 2>&1
+      - name: Run default-profile owner and bridge regression tests
+        run: |
+          set -euo pipefail
+          node scripts/test-macos-native.mts default --package-path apps/macos --build-system native --enable-code-coverage --disable-index-store -Xswiftc -gline-tables-only --skip-build --no-parallel --filter 'LaunchAgentManagerTests|DeviceSettingsBridgeTests|DeviceSettingsConsentTests|DashboardWindowOwnershipTests' > evidence/native-default.log 2>&1
+          tail -60 evidence/native-default.log
+      - name: Run named-profile AppState regression tests
+        run: |
+          set -euo pipefail
+          node scripts/test-macos-native.mts named --package-path apps/macos --build-system native --enable-code-coverage --disable-index-store -Xswiftc -gline-tables-only --skip-build --no-parallel --filter 'AppStateIsolationTests' > evidence/native-named.log 2>&1
+          tail -40 evidence/native-named.log
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: always()
+        with:
+          name: pr185024-native-${{ env.TARGET_SHA }}
+          path: evidence/
+  shared-and-swift-checks:
+    if: github.repository == 'harjothkhara/openclaw'
+    runs-on: macos-26-intel
+    timeout-minutes: 65
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          repository: openclaw/openclaw
+          ref: ${{ env.TARGET_SHA }}
+          persist-credentials: false
+      - name: Select and record toolchain
+        run: |
+          set -euo pipefail
+          mkdir -p evidence
+          test "$(git rev-parse HEAD)" = "$TARGET_SHA"
+          source scripts/lib/swift-toolchain.sh
+          select_xcode_toolchain
+          require_swift_toolchain
+          { git rev-parse HEAD; xcodebuild -version; swift --version; sw_vers; } > evidence/source-toolchain.txt
+      - uses: ./.github/actions/setup-node-env
+        with:
+          node-version: 24.22.1
+          install-bun: "false"
+      - name: Prepare bundled Apple resources
+        run: node scripts/prepare-apple-mermaid.mjs
+      - name: Install pinned Swift checking tools
+        run: |
+          bash scripts/install-swift-tools.sh "$RUNNER_TEMP/swift-tools"
+          echo "$RUNNER_TEMP/swift-tools" >> "$GITHUB_PATH"
+      - name: Full macOS SourceKit-backed lint
+        id: lint
+        run: bash scripts/lint-swift.sh macos > evidence/swiftlint.log 2>&1
+      - name: macOS Swift formatting
+        if: ${{ !cancelled() }}
+        run: bash scripts/format-swift.sh macos > evidence/swiftformat.log 2>&1
+      - name: Native localization verification
+        if: ${{ !cancelled() }}
+        run: pnpm native:i18n:verify > evidence/localization.log 2>&1
+      - name: Shared admission queue and bridge contract tests
+        if: ${{ !cancelled() }}
+        run: |
+          set -euo pipefail
+          swift test --package-path apps/shared/OpenClawKit --scratch-path "$RUNNER_TEMP/pr185024-shared" --disable-index-store -Xswiftc -gline-tables-only --no-parallel --filter 'DeviceSettingsRequestQueueTests|DeviceSettingsContractTests' > evidence/shared-tests.log 2>&1
+          tail -60 evidence/shared-tests.log
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: always()
+        with:
+          name: pr185024-shared-swift-${{ env.TARGET_SHA }}
+          path: evidence/
