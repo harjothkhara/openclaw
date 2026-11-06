@@ -2,6 +2,10 @@ name: Android Files native retry proof (fork only)
 on:
   workflow_dispatch:
     inputs:
+      bootstrap_only:
+        type: boolean
+        default: false
+        description: Docker Gateway/list251 only; no SDK, APK or emulator
       source_repository:
         description: Repository containing exact PR head 28328419 (public fork or upstream)
         required: true
@@ -40,18 +44,22 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@v6
         with:
-          node-version: '26'
+          node-version: '24'
       - uses: pnpm/action-setup@v4
         with:
           run_install: false
+      - name: Frozen controller dependencies
+        run: pnpm install --frozen-lockfile
       - name: Existing Android/KVM setup
+        if: ${{ !inputs.bootstrap_only }}
         id: android
         uses: ./.github/actions/setup-android-toolchain
         with:
           cache-mode: 'off'
-          install-native-deps: 'true'
+          install-native-deps: 'false'
           install-screenshot-emulators: 'true'
       - name: Build exact baseline/candidate normal APKs and external UI test APKs
+        if: ${{ !inputs.bootstrap_only }}
         env:
           JAVA_HOME: ${{ steps.android.outputs.gradle-java-home }}
         shell: bash
@@ -92,6 +100,7 @@ jobs:
           pathlib.Path(os.environ['RUNNER_TEMP']+'/files-apks.json').write_text(json.dumps(data,indent=2))
           PY
       - name: Phone-only KVM normal onboarding and Files flow
+        if: ${{ !inputs.bootstrap_only }}
         shell: bash
         run: |
           set -euo pipefail
@@ -112,6 +121,11 @@ jobs:
           adb shell settings put global transition_animation_scale 0
           adb shell settings put global animator_duration_scale 0
           pnpm exec tsx "$GITHUB_WORKSPACE/.files-proof-harness/proof/android-files/controller.mjs" "$GITHUB_WORKSPACE" "$RUNNER_TEMP/files-apks.json" "$GITHUB_WORKSPACE/native-files-proof-output"
+      - name: Docker bootstrap preflight only
+        if: ${{ inputs.bootstrap_only }}
+        env:
+          FILES_PROOF_BOOTSTRAP_ONLY: '1'
+        run: pnpm exec tsx "$GITHUB_WORKSPACE/.files-proof-harness/proof/android-files/controller.mjs" "$GITHUB_WORKSPACE" - "$GITHUB_WORKSPACE/native-files-proof-output"
       - name: Keep sanitized native evidence only
         if: always()
         uses: actions/upload-artifact@v4

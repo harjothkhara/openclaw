@@ -7,6 +7,7 @@ import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { pathToFileURL } from 'node:url';
 import path from 'node:path';
+import { createDockerGateway } from './docker-gateway.mjs';
 
 // Fork-only controller. Run with pnpm exec tsx; no provider credentials are inherited by Gateway.
 const [rootArg, manifestArg, outputArg] = process.argv.slice(2);
@@ -14,6 +15,7 @@ const BASE = '3fed691416b37f91b0db8dd77446f739e7bf92af';
 const HEAD = '28328419c54b3ef02cde5cc956b32139b3a86721';
 const TREE = '39a4fb9ed20cd067442ccf8ca1d957f85bd33bed';
 const secrets = [];
+const bootstrapOnly = process.env.FILES_PROOF_BOOTSTRAP_ONLY === '1';
 const redact = (text) => secrets.reduce((s, secret) => secret ? s.split(secret).join('[REDACTED]') : s, String(text))
   .replace(/(?:https?|wss?):\/\/[^\s<>"']+/g, '[URL_REDACTED]');
 async function run(bin, args, options = {}) {
@@ -30,38 +32,32 @@ async function run(bin, args, options = {}) {
 }
 const hash = async (file) => createHash('sha256').update(await readFile(file)).digest('hex');
 async function main() {
-  if (!rootArg || !manifestArg || !outputArg) throw new Error('usage: controller.mjs SOURCE_ROOT APK_MANIFEST OUTPUT_DIR');
+  if (!rootArg || !outputArg || (!bootstrapOnly && !manifestArg)) throw new Error('usage: controller.mjs SOURCE_ROOT APK_MANIFEST OUTPUT_DIR');
   const root = path.resolve(rootArg); const output = path.resolve(outputArg);
   await mkdir(output, { recursive: true });
-  const manifest = JSON.parse(await readFile(manifestArg, 'utf8'));
-  if (manifest.baseline.sha !== BASE || manifest.candidate.sha !== HEAD || manifest.candidate.tree !== TREE) throw new Error('source identity mismatch');
+  const manifest = bootstrapOnly ? null : JSON.parse(await readFile(manifestArg, 'utf8'));
+  if (!bootstrapOnly && (manifest.baseline.sha !== BASE || manifest.candidate.sha !== HEAD || manifest.candidate.tree !== TREE)) throw new Error('source identity mismatch');
   const require = createRequire(path.join(root, 'package.json'));
   const { WebSocket, WebSocketServer } = require('ws');
-  const { createOpenClawTestInstance } = await import(pathToFileURL(path.join(root, 'test/helpers/openclaw-test-instance.ts')));
-  const { prepareIOSReleaseGateway } = await import(pathToFileURL(path.join(root, 'scripts/lib/ios-release-gateway.ts')));
   const { callGateway } = await import(pathToFileURL(path.join(root, 'src/gateway/call.ts')));
   const work = await mkdtemp(path.join(tmpdir(), 'android-files-native-'));
-  const workspace = path.join(work, 'workspace');
-  await mkdir(path.join(workspace, 'retry-proof'), { recursive: true });
-  for (let n = 0; n < 251; n++) await writeFile(path.join(workspace, 'retry-proof', 'file-' + String(n).padStart(3, '0') + '.txt'), 'Native Files proof\n');
   const abort = new AbortController();
   const deadline = setTimeout(() => abort.abort(), 45 * 60000);
-  let instance;
+  let gateway;
   try {
-    const gateway = await prepareIOSReleaseGateway({ targetSha: HEAD, selectionDir: path.join(work, 'selection'), installDir: path.join(work, 'gateway'), signal: abort.signal });
-    const owned = new Set(['HOME', 'OPENCLAW_STATE_DIR', 'OPENCLAW_CONFIG_PATH', 'OPENCLAW_AGENT_DIR']);
-    const allow = new Set(['PATH', 'TMPDIR', 'LANG', 'LC_ALL', 'USER', 'LOGNAME', 'SHELL']);
-    const cleared = Object.fromEntries(Object.keys(process.env).filter((key) => !owned.has(key) && !allow.has(key)).map((key) => [key, undefined]));
-    instance = await createOpenClawTestInstance({ name: 'android-files-native', cwd: gateway.cwd, entrypoint: gateway.entrypoint,
-      config: { gateway: { controlUi: { enabled: false } }, cron: { enabled: false }, agents: { defaults: { workspace } } },
-      env: { ...cleared, OPENCLAW_TEST_MINIMAL_GATEWAY: '0', OPENCLAW_SKIP_CHANNELS: '0', OPENCLAW_SKIP_PROVIDERS: '0' }, signal: abort.signal });
-    secrets.push(instance.gatewayToken, instance.hookToken);
-    await instance.startGateway();
-    const rpc = (method, params) => callGateway({ config: {}, configPath: instance.configPath, url: instance.url,
-      token: instance.gatewayToken, ignoreEnvUrlOverride: true, deviceIdentity: null, sharedStateMode: 'read-only', method, params, signal: abort.signal, timeoutMs: 30000 });
+    gateway = await createDockerGateway({ work, run, signal: abort.signal, secrets, evidenceDir: output, redact });
+    const rpc = (method, params) => callGateway({ config: {}, configPath: gateway.configPath, url: gateway.url,
+      token: gateway.gatewayToken, ignoreEnvUrlOverride: true, deviceIdentity: null, sharedStateMode: 'read-only', method, params, signal: abort.signal, timeoutMs: 30000 });
     const listing = await rpc('agents.workspace.list', { agentId: 'main', path: 'retry-proof', limit: 500 });
     if (listing.totalEntries !== 251 || listing.entries.length !== 251) throw new Error('seeded child folder must contain exactly 251 entries');
     await writeFile(path.join(output, 'gateway-identity.json'), JSON.stringify(gateway.identity, null, 2));
+    if (bootstrapOnly) {
+      await gateway.cleanup();
+      await writeFile(path.join(output, 'result.json'), JSON.stringify({ bootstrapOnly: true, success: true,
+        entries: listing.entries.length, totalEntries: listing.totalEntries, cleanupProven: true, gateway: gateway.identity }, null, 2));
+      console.log('BOOTSTRAP ONLY PASS: real Gateway list251; owned container removed.');
+      return;
+    }
     const adbBin = process.env.ADB ?? path.join(process.env.ANDROID_HOME ?? process.env.ANDROID_SDK_ROOT, 'platform-tools/adb');
     const adb = (args, options = {}) => run(adbBin, ['-s', process.env.ANDROID_SERIAL ?? 'emulator-5554', ...args], options);
     const app = 'ai.openclaw.app.debug';
@@ -69,7 +65,7 @@ async function main() {
     for (const revision of ['baseline', 'candidate']) {
       const item = manifest[revision]; const dir = path.join(output, revision); await mkdir(dir, { recursive: true });
       if ((await run('git', ['rev-parse', 'HEAD'], { cwd: item.root })).stdout.toString().trim() !== item.sha) throw new Error('checkout HEAD changed');
-      const proxy = await startFilesProxy({ gatewayUrl: instance.url, evidenceDir: dir, revision, WebSocket, WebSocketServer });
+      const proxy = await startFilesProxy({ gatewayUrl: gateway.url, evidenceDir: dir, revision, WebSocket, WebSocketServer });
       let instrumentation;
       try {
         await adb(['shell', 'am', 'force-stop', app], { allowFailure: true });
@@ -110,12 +106,26 @@ async function main() {
         evidence.push(result); await writeFile(path.join(dir, 'identity-and-result.json'), JSON.stringify(result, null, 2));
       } finally { await proxy.close(); await adb(['reverse', '--remove', 'tcp:' + proxy.port], { allowFailure: true }); }
     }
-    await writeFile(path.join(output, 'result.json'), JSON.stringify({ proof: 'normal packaged Android app; real isolated published Gateway; one-shot path+offset fault proxy', revisions: evidence }, null, 2));
+    await gateway.cleanup();
+    await writeFile(path.join(output, 'result.json'), JSON.stringify({ proof: 'normal packaged Android app; real isolated published Gateway; one-shot path+offset fault proxy', cleanupProven: true, revisions: evidence }, null, 2));
     console.log('NATIVE FILES PROOF PASSED: baseline stale error present; candidate absent; same connection and retained rows.');
-  } finally { clearTimeout(deadline); abort.abort(); if (instance) await instance.cleanup(); await rm(work, { recursive: true, force: true }); }
+  } catch (error) {
+    if (gateway) {
+      await gateway.captureFailure();
+      try { await gateway.cleanup(); } catch (failure) {
+        if (failure === error) throw error;
+        throw new AggregateError([error, failure], 'Proof failed and Docker cleanup is unproven');
+      }
+    }
+    throw error;
+  } finally { clearTimeout(deadline); abort.abort(); }
 }
 if (rootArg) main().catch(async (error) => {
-  const message = redact(error?.stack ?? error);
+  // AggregateError.stack omits nested causes; retain both proof and cleanup diagnostics.
+  const describe = (failure) => failure instanceof AggregateError
+    ? [failure.stack, ...failure.errors.map(describe)].join('\nCaused by:\n')
+    : String(failure?.stack ?? failure);
+  const message = redact(describe(error));
   if (outputArg) { await mkdir(outputArg, { recursive: true }); await writeFile(path.join(outputArg, 'failure.txt'), message); }
   console.error(message); process.exitCode = 1;
 });
