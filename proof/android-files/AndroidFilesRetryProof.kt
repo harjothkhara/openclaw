@@ -11,6 +11,7 @@ import androidx.test.uiautomator.StaleObjectException
 import androidx.test.uiautomator.Condition
 import androidx.test.uiautomator.UiDevice
 import androidx.test.uiautomator.UiObject2
+import androidx.test.uiautomator.Until
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -42,6 +43,7 @@ class AndroidFilesRetryProof {
     check(input.delete())
     val output = File(context.filesDir, "native-files-proof").apply { mkdirs() }
     val ui = ReleaseValidationUi(instrumentation)
+    val mainSidebar = By.pkg(context.packageName).desc("Show Sidebar")
     fun snapshot(name: String) {
       val xml = File(output, name + ".xml")
       ui.device.dumpWindowHierarchy(xml)
@@ -97,23 +99,32 @@ class AndroidFilesRetryProof {
       ui.clickText("Use setup code")
       ui.requireObject(By.text("Gateway paired"), "Real Gateway setup-code pairing did not complete", 60_000)
       snapshot("01-gateway-paired")
-      ui.clickText("Continue")
       var complete = false
       repeat(6) {
         if (!complete) {
           val next = ui.device.wait(Condition<UiDevice, String?> {
             when {
-              ui.device.hasObject(By.desc("Show Sidebar")) -> "done"
+              ui.device.hasObject(mainSidebar) -> "done"
               ui.device.hasObject(By.text("Approve access and continue").enabled(true)) -> "Approve access and continue"
               ui.device.hasObject(By.text("Continue").enabled(true)) -> "Continue"
               else -> null
             }
           }, 30_000)
           checkNotNull(next) { "Normal onboarding did not reach a continuation" }
-          if (next == "done") complete = true else ui.clickText(next)
+          if (next == "done") {
+            complete = true
+          } else {
+            try {
+              ui.clickText(next)
+            } catch (failure: IllegalStateException) {
+              // Onboarding can finish while a continuation tap is being prepared.
+              // Accept that race only when the same app exposes its terminal sidebar.
+              if (ui.device.wait(Until.hasObject(mainSidebar), 5_000) == true) complete = true else throw failure
+            }
+          }
         }
       }
-      ui.requireObject(By.desc("Show Sidebar"), "Normal onboarding did not reach Chat").click()
+      ui.requireObject(mainSidebar, "Normal onboarding did not reach the main app").click()
       ui.clickText("Overview")
       ui.requireObject(By.text("Online"), "Real Gateway is not online", 30_000)
       seek(By.text("Files"), true)
